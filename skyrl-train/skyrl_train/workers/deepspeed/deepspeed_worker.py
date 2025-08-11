@@ -73,7 +73,7 @@ class DeepSpeedPolicyWorkerBase(PolicyWorkerBase):
         )
 
         actor_scheduler = get_scheduler(
-            "constant_with_warmup",
+            self.cfg.trainer.policy.optimizer_config.scheduler,
             actor_optim,
             num_warmup_steps=self.cfg.trainer.policy.optimizer_config.num_warmup_steps,
         )

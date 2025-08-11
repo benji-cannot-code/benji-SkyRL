@@ -30,7 +30,6 @@ from skyrl_train.distributed.fsdp_utils import (
     fsdp2_get_full_state_dict,
     apply_fsdp2,
     get_sharding_strategy,
-    get_constant_schedule_with_warmup,
     offload_fsdp_model_to_cpu,
     load_fsdp_model_to_gpu,
     offload_fsdp_optimizer,
@@ -39,6 +38,7 @@ from skyrl_train.distributed.fsdp_utils import (
     fsdp_version,
     fsdp2_load_full_state_dict,
 )
+from transformers.trainer import get_scheduler
 
 from packaging import version
 
@@ -276,9 +276,10 @@ class FSDPStrategy(DistributedStrategy):
                 weight_decay=optim_config.weight_decay,
             )
 
-            #  TODO(csy): add other schedulers, add more to config
-            actor_lr_scheduler = get_constant_schedule_with_warmup(
-                optimizer=actor_optimizer, num_warmup_steps=optim_config.num_warmup_steps
+            actor_lr_scheduler = get_scheduler(
+                optim_config.scheduler,
+                actor_optimizer,
+                num_warmup_steps=optim_config.num_warmup_steps,
             )
         else:
             actor_optimizer = None
