@@ -263,7 +263,7 @@ class DeepSpeedCriticWorkerBase(CriticWorkerBase):
 
         # configure scheduler
         critic_scheduler = get_scheduler(
-            "constant_with_warmup",
+            self.cfg.trainer.critic.optimizer_config.scheduler,
             critic_optim,
             num_warmup_steps=self.cfg.trainer.critic.optimizer_config.num_warmup_steps,
             num_training_steps=num_training_steps,
