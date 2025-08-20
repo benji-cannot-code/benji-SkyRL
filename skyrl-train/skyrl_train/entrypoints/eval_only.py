@@ -1,5 +1,5 @@
 """
-uv run --isolated --extra vllm -m skyrl_train.entrypoints.main_eval
+uv run --isolated --extra vllm -m skyrl_train.entrypoints.eval_only
 """
 
 import asyncio
@@ -47,7 +47,7 @@ class EvalPPOExp(BasePPOExp):
             tracker=self.get_tracker(),
             tokenizer=tokenizer,
             train_dataset=self.train_dataset,
-            eval_dataset=self.train_dataset,
+            eval_dataset=self.eval_dataset,
             inference_engine_client=inference_engine_client,
             generator=generator,
             colocate_pg=self.colocate_pg,
