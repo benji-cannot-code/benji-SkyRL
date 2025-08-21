@@ -27,7 +27,7 @@ class EvalPPOExp(BasePPOExp):
         trainer.eval_dataloader = trainer.build_dataloader(dataset, is_train=False)
         return await trainer.eval()
 
-    def run(self) -> dict:
+    def run(self) -> dict[str, dict[str, float]]:
         tokenizer = self.tokenizer
         # TODO: to confirm, i think i can just create an inference engine like this?
         if self.cfg.generator.run_engines_locally:
@@ -38,27 +38,30 @@ class EvalPPOExp(BasePPOExp):
             inference_engines = create_remote_inference_engines_from_config(self.cfg)
 
         inference_engine_client = InferenceEngineClient(inference_engines)
-        # TODO: chatgpt recommended wake up, figure out if wake up is needed here
-        asyncio.run(inference_engine_client.wake_up())
-        generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
+        async def _run_all_evals():
+            # TODO: chatgpt recommended wake up, figure out if wake up is needed here
+            await inference_engine_client.wake_up()
+            generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
-        trainer = RayPPOTrainer(
-            cfg=self.cfg,
-            tracker=self.get_tracker(),
-            tokenizer=tokenizer,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset,
-            inference_engine_client=inference_engine_client,
-            generator=generator,
-            colocate_pg=self.colocate_pg,
-        )
+            trainer = RayPPOTrainer(
+                cfg=self.cfg,
+                tracker=self.get_tracker(),
+                tokenizer=tokenizer,
+                train_dataset=self.train_dataset,
+                eval_dataset=self.eval_dataset,
+                inference_engine_client=inference_engine_client,
+                generator=generator,
+                colocate_pg=self.colocate_pg,
+            )
 
-        metrics = {}
-        if self.train_dataset is not None:
-            metrics["train"] = asyncio.run(self._run_eval(trainer, self.train_dataset))
-        if self.eval_dataset is not None:
-            metrics["eval"] = asyncio.run(self._run_eval(trainer, self.eval_dataset))
-        return metrics
+            metrics = {}
+            if self.train_dataset is not None:
+                metrics["train"] = await self._run_eval(trainer, self.train_dataset)
+            if self.eval_dataset is not None:
+                metrics["eval"] = await self._run_eval(trainer, self.eval_dataset)
+            return metrics
+
+        return asyncio.run(_run_all_evals())
 
 
 @ray.remote(num_cpus=1)
