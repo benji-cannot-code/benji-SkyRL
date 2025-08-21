@@ -115,46 +115,26 @@ def validate_batch_sizes(cfg: DictConfig):
 
 
 def validate_cfg(cfg: DictConfig):
-    # TODO: reuse code from eval validation
+
+    # validate config related to eval only run
+    validate_eval_only_cfg(cfg)
+
     from .ppo_utils import AdvantageEstimatorRegistry, PolicyLossRegistry
 
-    if cfg.generator.max_turns == 1:
-        assert (
-            cfg.generator.max_input_length == cfg.trainer.max_prompt_length
-        ), "generator.max_input_length should be set equal to trainer.max_prompt_length for single-turn generation"
-    else:
-        assert (
-            cfg.generator.max_input_length >= cfg.trainer.max_prompt_length
-        ), "generator.max_input_length should be set greater than or equal to trainer.max_prompt_length for multi-turn generation"
-
-    if not cfg.generator.run_engines_locally:
-        assert cfg.generator.num_inference_engines == len(
-            cfg.generator.remote_inference_engine_urls
-        ), "num_inference_engines should be equal to the number of remote_inference_engine_urls"
-
-    if not cfg.generator.async_engine and cfg.generator.backend == "vllm":
-        assert (
-            cfg.generator.batched
-        ), "if we are using the offline vLLM engine, we need to put generator in batched mode for faster generation"
-
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     assert (
         cfg.trainer.sequence_parallel_backend == "ulysses"
     ), f"only ulysses is supported as of now, got {cfg.trainer.sequence_parallel_backend}"
 
     # if advantage estimator is GAE, then critic path should be provided
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.algorithm.advantage_estimator == "gae":
         assert (
             cfg.trainer.critic.model.path
         ), "`trainer.critic.model.path` should be provided for PPO training, got `None`"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     assert not (
         cfg.trainer.algorithm.use_kl_in_reward and cfg.trainer.algorithm.use_kl_loss
     ), "use_kl_in_reward and use_kl_loss should be mutually exclusive"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.strategy in ("fsdp", "fsdp2"):
         assert not (
             cfg.trainer.policy.fsdp_config.cpu_offload and cfg.trainer.strategy == "fsdp"
@@ -163,45 +143,26 @@ def validate_cfg(cfg: DictConfig):
             cfg.trainer.critic.fsdp_config.cpu_offload and cfg.trainer.strategy == "fsdp"
         ), "fwd pass cpu offloading is not supported for FSDP1 critic worker, use FSDP2 instead"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.strategy == "deepspeed":
         assert (
             cfg.trainer.policy.deepspeed_config.zero_optimization.stage == 3
         ), "only deepspeed stage 3 is currently supported!"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     validate_batch_sizes(cfg)
 
-    # tracker
-    if cfg.trainer.logger == "wandb":
-        assert os.environ.get("WANDB_API_KEY"), "`WANDB_API_KEY` is required for `wandb` logger"
-
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.max_ckpts_to_keep == 0:
         raise ValueError(
             "`max_ckpts_to_keep` must be greater than 0 to keep the last N checkpoints or negative to keep all checkpoints"
         )
 
-    # resolve override_existing_update_group
-    if cfg.generator.override_existing_update_group == "auto":
-        if cfg.generator.backend == "vllm" and not cfg.generator.run_engines_locally:
-            # remote engines can be launched separately so we `enable` by default
-            cfg.generator.override_existing_update_group = "enable"
-        else:
-            # for local engines or sglang, we disable
-            cfg.generator.override_existing_update_group = "disable"
-
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     assert (
         cfg.trainer.algorithm.policy_loss_type in PolicyLossRegistry.list_available()
     ), f"invalid policy_loss_type: {cfg.trainer.algorithm.policy_loss_type}. Must be one of {PolicyLossRegistry.list_available()}"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     assert (
         cfg.trainer.algorithm.advantage_estimator in AdvantageEstimatorRegistry.list_available()
     ), f"invalid advantage_estimator: {cfg.trainer.algorithm.advantage_estimator}. Must be one of {AdvantageEstimatorRegistry.list_available()}"
 
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     assert cfg.trainer.algorithm.loss_reduction in (
         "token_mean",
         "sequence_mean",
@@ -226,14 +187,6 @@ def validate_cfg(cfg: DictConfig):
         algorithm_config.kl_estimator_type = "k3"
     cfg.trainer.algorithm = algorithm_config
 
-    # TODO: fix once we support these features with SGLang
-    if cfg.generator.backend == "sglang" and cfg.generator.run_engines_locally:
-        assert cfg.generator.inference_engine_tensor_parallel_size == 1, (
-            "As of now, We do not support tensor parallel inference engine with SGLang when running engines locally. "
-            "Please set `inference_engine_tensor_parallel_size` to 1."
-        )
-
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.strategy == "deepspeed" and not (
         cfg.trainer.policy.optimizer_config.offload_after_step
         and cfg.trainer.critic.optimizer_config.offload_after_step
@@ -242,10 +195,6 @@ def validate_cfg(cfg: DictConfig):
             "`offload_after_step=False` is not supported for DeepSpeed, please set `offload_after_step` to `true` for both policy and critic"
         )
 
-    if cfg.generator.backend == "sglang" and not cfg.generator.use_conversation_multi_turn:
-        raise NotImplementedError("`use_conversation_multi_turn=False` is not supported for SGLang backend")
-
-    # TODO: (delee later) just a mark that this is only training related, not included in eval only validation
     if cfg.trainer.algorithm.use_tis:
         if cfg.trainer.algorithm.tis_imp_ratio_cap <= 0:
             raise ValueError(
@@ -266,21 +215,6 @@ def validate_cfg(cfg: DictConfig):
                 "Gneration with `trainer.algorithm.use_tis` needs to be batched with only single turn generation"
             )
 
-    if cfg.generator.sampling_params.logprobs is not None:
-        assert isinstance(cfg.generator.sampling_params.logprobs, int)
-
-        if cfg.generator.sampling_params.logprobs > 0:
-            raise ValueError(
-                f"`logprobs` if set should be 0 i.e only for the chosen token, got {cfg.generator.sampling_params.logprobs}"
-            )
-        if not cfg.generator.batched:
-            raise NotImplementedError(
-                "Async generation with `generator.batched=false` doesn't support `sampling_params.logprobs`"
-            )
-
-        if not cfg.generator.run_engines_locally:
-            raise NotImplementedError("Remote inference mode doesn't support `sampling_params.logprobs`")
-
 
 def validate_eval_only_cfg(cfg: DictConfig):
     """Validates that the config for an eval only run is valid.
@@ -290,27 +224,25 @@ def validate_eval_only_cfg(cfg: DictConfig):
         cfg (DictConfig): config to validate
 
     Raises:
-        NotImplementedError: _description_
-        ValueError: _description_
-        NotImplementedError: _description_
-        NotImplementedError: _description_
+        NotImplementedError: if feature is not supported, such as sglang for multiturn generation
+        ValueError: when cfg.generator.sampling_params.logprobs > 0
     """
 
     # input length vs prompt length constraints
     if cfg.generator.max_turns == 1:
         assert (
             cfg.generator.max_input_length == cfg.trainer.max_prompt_length
-        ), "generator.max_input_length should equal trainer.max_prompt_length for single-turn generation"
+        ), "generator.max_input_length should be set equal to trainer.max_prompt_length for single-turn generation"
     else:
         assert (
             cfg.generator.max_input_length >= cfg.trainer.max_prompt_length
-        ), "generator.max_input_length should be >= trainer.max_prompt_length for multi-turn generation"
+        ), "generator.max_input_length should be set greater than or equal to trainer.max_prompt_length for multi-turn generation"
 
     # remote engines count correct
     if not cfg.generator.run_engines_locally:
         assert cfg.generator.num_inference_engines == len(
             cfg.generator.remote_inference_engine_urls
-        ), "num_inference_engines should equal the number of remote_inference_engine_urls"
+        ), "num_inference_engines should be equal to the number of remote_inference_engine_urls"
 
     # vLLM
     if not cfg.generator.async_engine and cfg.generator.backend == "vllm":
@@ -325,8 +257,10 @@ def validate_eval_only_cfg(cfg: DictConfig):
     # resolve override_existing_update_group just like training
     if cfg.generator.override_existing_update_group == "auto":
         if cfg.generator.backend == "vllm" and not cfg.generator.run_engines_locally:
+            # remote engines can be launched separately so we `enable` by default
             cfg.generator.override_existing_update_group = "enable"
         else:
+            # for local engines or sglang, we disable
             cfg.generator.override_existing_update_group = "disable"
 
     # sglang tensor parallel size when local
