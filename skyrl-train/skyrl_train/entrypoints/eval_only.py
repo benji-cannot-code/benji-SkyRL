@@ -18,7 +18,7 @@ from skyrl_train.entrypoints.main_base import (
 )
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.trainer import RayPPOTrainer
-from skyrl_train.utils.utils import validate_eval_only_cfg
+from skyrl_train.utils.utils import validate_generator_cfg
 from skyrl_train.utils.utils import initialize_ray
 
 TRAIN_METRICS_KEY = "train"
@@ -73,7 +73,7 @@ def eval_entrypoint(cfg: DictConfig) -> dict:
 
 @hydra.main(config_path=config_dir, config_name="ppo_base_config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    validate_eval_only_cfg(cfg)
+    validate_generator_cfg(cfg)
     initialize_ray(cfg)
     metrics = ray.get(eval_entrypoint.remote(cfg))
     logger.info(f"Metrics from eval only run: {metrics}")

@@ -117,7 +117,7 @@ def validate_batch_sizes(cfg: DictConfig):
 def validate_cfg(cfg: DictConfig):
 
     # validate config related to eval only run
-    validate_eval_only_cfg(cfg)
+    validate_generator_cfg(cfg)
 
     from .ppo_utils import AdvantageEstimatorRegistry, PolicyLossRegistry
 
@@ -216,8 +216,8 @@ def validate_cfg(cfg: DictConfig):
             )
 
 
-def validate_eval_only_cfg(cfg: DictConfig):
-    """Validates that the config for an eval only run is valid.
+def validate_generator_cfg(cfg: DictConfig):
+    """Validates the correctness of generator-related config.
     Does not care about training-related configs.
 
     Args:
@@ -251,6 +251,7 @@ def validate_eval_only_cfg(cfg: DictConfig):
         ), "if we are using the offline vLLM engine, we need to put generator in batched mode for faster generation"
 
     # tracker envs (optional but helpful for early failure)
+    # TODO(tgriggs): use a more modular config validation
     if cfg.trainer.logger == "wandb":
         assert os.environ.get("WANDB_API_KEY"), "`WANDB_API_KEY` is required for `wandb` logger"
 
