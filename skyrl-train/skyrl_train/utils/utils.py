@@ -289,6 +289,7 @@ def validate_eval_only_cfg(cfg: DictConfig):
         if not cfg.generator.run_engines_locally:
             raise NotImplementedError("Remote inference mode doesn't support `sampling_params.logprobs`")
 
+
 @ray.remote
 def get_all_env_variables():
     import os
