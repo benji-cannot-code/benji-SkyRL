@@ -101,6 +101,8 @@ class RayPPOTrainer:
 
         self.reward_kl_controller: Optional[Union[FixedKLController, AdaptiveKLController]] = None
 
+        self.global_step = 0
+
     def build_dataloader(self, dataset: PromptDataset, is_train=True):
         """
         Build the dataloader for the training or evaluation dataset
