@@ -3,7 +3,6 @@ uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_eval_only.py
 """
 
 import json
-import pytest
 import ray
 
 from omegaconf import DictConfig
