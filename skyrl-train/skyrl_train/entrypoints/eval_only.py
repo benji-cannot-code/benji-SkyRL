@@ -29,7 +29,6 @@ class EvalPPOExp(BasePPOExp):
 
     def run(self) -> dict[str, dict[str, float]]:
         tokenizer = self.tokenizer
-        # TODO: to confirm, i think i can just create an inference engine like this?
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(
                 self.cfg, self.colocate_pg, tokenizer
@@ -39,7 +38,6 @@ class EvalPPOExp(BasePPOExp):
 
         inference_engine_client = InferenceEngineClient(inference_engines)
         async def _run_all_evals():
-            # TODO: chatgpt recommended wake up, figure out if wake up is needed here
             await inference_engine_client.wake_up()
             generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
@@ -73,7 +71,6 @@ def eval_entrypoint(cfg: DictConfig) -> dict:
 @hydra.main(config_path=config_dir, config_name="ppo_base_config", version_base=None)
 def main(cfg: DictConfig) -> None:
     validate_eval_only_cfg(cfg)
-    # TODO: check that i can just pass in this config to initalize ray
     initialize_ray(cfg)
     metrics = ray.get(eval_entrypoint.remote(cfg))
     logger.info(f"Metrics from eval only run: {metrics}")
