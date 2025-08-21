@@ -29,7 +29,7 @@ class EvalPPOExp(BasePPOExp):
     async def _run_eval(self, trainer: RayPPOTrainer, dataset):
         trainer.eval_dataset = dataset
         trainer.eval_dataloader = trainer.build_dataloader(dataset, is_train=False)
-        return await trainer.eval()
+        return await trainer.eval(eval_only=True)
 
     def run(self) -> dict[str, dict[str, float]]:
         tokenizer = self.tokenizer
