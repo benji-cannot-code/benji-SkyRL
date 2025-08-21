@@ -11,7 +11,7 @@ from omegaconf import DictConfig
 from skyrl_gym.envs import register
 from skyrl_gym.envs.base_text_env import BaseTextEnv, BaseTextEnvStepOutput
 
-from skyrl_train.entrypoints.eval_only import EvalPPOExp
+from skyrl_train.entrypoints.eval_only import EvalPPOExp, TRAIN_METRICS_KEY, EVAL_METRICS_KEY
 from skyrl_train.utils.utils import initialize_ray
 from tests.gpu.utils import get_test_actor_config
 
@@ -83,9 +83,9 @@ def test_eval_only(tmp_path):
         exp = EvalPPOExp(cfg)
         metrics = exp.run()
 
-        assert "train" in metrics
-        assert "eval" in metrics
-        assert isinstance(metrics["train"], dict)
-        assert isinstance(metrics["eval"], dict)
+        assert TRAIN_METRICS_KEY in metrics
+        assert EVAL_METRICS_KEY in metrics
+        assert isinstance(metrics[TRAIN_METRICS_KEY], dict)
+        assert isinstance(metrics[EVAL_METRICS_KEY], dict)
     finally:
         ray.shutdown()

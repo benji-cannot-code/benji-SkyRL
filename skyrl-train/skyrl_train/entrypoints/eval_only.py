@@ -1,4 +1,5 @@
 """
+An entry point to run evaluatio only:
 uv run --isolated --extra vllm -m skyrl_train.entrypoints.eval_only
 """
 
@@ -19,6 +20,9 @@ from skyrl_train.inference_engines.inference_engine_client import InferenceEngin
 from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.utils.utils import validate_eval_only_cfg
 from skyrl_train.utils.utils import initialize_ray
+
+TRAIN_METRICS_KEY = "train"
+EVAL_METRICS_KEY = "eval"
 
 
 class EvalPPOExp(BasePPOExp):
@@ -53,9 +57,9 @@ class EvalPPOExp(BasePPOExp):
 
             metrics = {}
             if self.train_dataset is not None:
-                metrics["train"] = await self._run_eval(trainer, self.train_dataset)
+                metrics[TRAIN_METRICS_KEY] = await self._run_eval(trainer, self.train_dataset)
             if self.eval_dataset is not None:
-                metrics["eval"] = await self._run_eval(trainer, self.eval_dataset)
+                metrics[EVAL_METRICS_KEY] = await self._run_eval(trainer, self.eval_dataset)
             return metrics
 
         return asyncio.run(_run_all_evals())
