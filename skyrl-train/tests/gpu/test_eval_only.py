@@ -57,7 +57,9 @@ def test_eval_only(tmp_path):
 
         assert TRAIN_METRICS_KEY in metrics, f"Train metrics not found in {metrics}"
         assert EVAL_METRICS_KEY in metrics, f"Eval metrics not found in {metrics}"
-        assert isinstance(metrics[TRAIN_METRICS_KEY], dict), f"Train metrics is not a dict: {metrics[TRAIN_METRICS_KEY]}"
+        assert isinstance(
+            metrics[TRAIN_METRICS_KEY], dict
+        ), f"Train metrics is not a dict: {metrics[TRAIN_METRICS_KEY]}"
         assert isinstance(metrics[EVAL_METRICS_KEY], dict), f"Eval metrics is not a dict: {metrics[EVAL_METRICS_KEY]}"
     finally:
         ray.shutdown()
