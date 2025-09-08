@@ -1,6 +1,6 @@
 """
 An entry point to run evaluatio only:
-uv run --isolated --extra vllm -m skyrl_train.entrypoints.eval_only
+uv run --isolated --extra vllm -m skyrl_train.entrypoints.main_generate
 """
 
 import asyncio

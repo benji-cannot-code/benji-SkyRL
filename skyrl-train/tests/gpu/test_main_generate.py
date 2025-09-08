@@ -1,11 +1,11 @@
 """
-uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_eval_only.py
+uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_main_generate.py
 """
 
 import json
 import ray
 
-from skyrl_train.entrypoints.eval_only import EvalPPOExp, TRAIN_METRICS_KEY, EVAL_METRICS_KEY
+from skyrl_train.entrypoints.main_generate import EvalPPOExp, TRAIN_METRICS_KEY, EVAL_METRICS_KEY
 from skyrl_train.utils.utils import initialize_ray
 from tests.gpu.utils import get_test_actor_config, get_test_generator_input
 
@@ -24,7 +24,7 @@ def create_dataset(tmp_path, model_name: str):
     return str(path)
 
 
-def test_eval_only(tmp_path):
+def test_main_generate(tmp_path):
     cfg = get_test_actor_config()
 
     # Minimize resources and side effects
