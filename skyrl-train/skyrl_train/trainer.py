@@ -77,7 +77,9 @@ class RayPPOTrainer:
         self.eval_dataset = eval_dataset
         self.inference_engine_client = inference_engine_client
         self.generator = generator
-        self.train_dataloader = self.build_dataloader(train_dataset, is_train=True) if train_dataset is not None else None
+        self.train_dataloader = (
+            self.build_dataloader(train_dataset, is_train=True) if train_dataset is not None else None
+        )
         self.eval_dataloader = self.build_dataloader(eval_dataset, is_train=False) if eval_dataset is not None else None
         self.colocate_pg = colocate_pg
 
