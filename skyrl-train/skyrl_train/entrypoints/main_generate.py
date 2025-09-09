@@ -61,6 +61,15 @@ class EvalOnlyEntrypoint(BasePPOExp):
             metrics = {}
             if self.eval_dataset is not None:
                 metrics[EVAL_METRICS_KEY] = await self._run_eval(trainer, self.eval_dataset)
+
+            # Export to wandb if configured
+            logger_cfg = self.cfg.trainer.logger
+            uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
+            if uses_wandb and EVAL_METRICS_KEY in metrics:
+                print("yay using wandb logging to it!")
+                step = getattr(trainer, "global_step", 0)
+                trainer.tracker.log(metrics[EVAL_METRICS_KEY], step=step)
+
             return metrics
 
         return asyncio.run(_run_all_evals())
