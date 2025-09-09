@@ -5,7 +5,7 @@ uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_main_generate.p
 import json
 import ray
 
-from skyrl_train.entrypoints.main_generate import EvalPPOExp, TRAIN_METRICS_KEY, EVAL_METRICS_KEY
+from skyrl_train.entrypoints.main_generate import EvalOnlyEntrypoint, EVAL_METRICS_KEY
 from skyrl_train.utils.utils import initialize_ray
 from tests.gpu.utils import get_test_actor_config, get_test_generator_input
 
@@ -46,20 +46,15 @@ def test_main_generate(tmp_path):
     initialize_ray(cfg)
     try:
         data_path = create_dataset(tmp_path, cfg.trainer.policy.model.path)
-        cfg.data.train_data = [data_path]
         cfg.data.val_data = [data_path]
         cfg.trainer.train_batch_size = 1
         cfg.trainer.eval_batch_size = 1
         cfg.trainer.eval_interval = 1
 
-        exp = EvalPPOExp(cfg)
+        exp = EvalOnlyEntrypoint(cfg)
         metrics = exp.run()
 
-        assert TRAIN_METRICS_KEY in metrics, f"Train metrics not found in {metrics}"
         assert EVAL_METRICS_KEY in metrics, f"Eval metrics not found in {metrics}"
-        assert isinstance(
-            metrics[TRAIN_METRICS_KEY], dict
-        ), f"Train metrics is not a dict: {metrics[TRAIN_METRICS_KEY]}"
         assert isinstance(metrics[EVAL_METRICS_KEY], dict), f"Eval metrics is not a dict: {metrics[EVAL_METRICS_KEY]}"
     finally:
         ray.shutdown()

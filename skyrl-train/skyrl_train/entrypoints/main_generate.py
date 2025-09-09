@@ -1,6 +1,6 @@
 """
 An entry point to run evaluatio only:
-uv run --isolated --extra vllm -m skyrl_train.entrypoints.main_generate
+bash examples/generation/generate.sh
 """
 
 import asyncio
@@ -21,11 +21,13 @@ from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.utils.utils import validate_generator_cfg
 from skyrl_train.utils.utils import initialize_ray
 
-TRAIN_METRICS_KEY = "train"
 EVAL_METRICS_KEY = "eval"
 
+class EvalOnlyEntrypoint(BasePPOExp):
+    def get_train_dataset(self):
+        """Override to avoid requiring a train dataset for eval-only runs."""
+        return None
 
-class EvalPPOExp(BasePPOExp):
     async def _run_eval(self, trainer: RayPPOTrainer, dataset):
         trainer.eval_dataset = dataset
         trainer.eval_dataloader = trainer.build_dataloader(dataset, is_train=False)
@@ -48,7 +50,7 @@ class EvalPPOExp(BasePPOExp):
                 cfg=self.cfg,
                 tracker=self.get_tracker(),
                 tokenizer=tokenizer,
-                train_dataset=self.train_dataset,
+                train_dataset=None,
                 eval_dataset=self.eval_dataset,
                 inference_engine_client=inference_engine_client,
                 generator=generator,
@@ -56,8 +58,6 @@ class EvalPPOExp(BasePPOExp):
             )
 
             metrics = {}
-            if self.train_dataset is not None:
-                metrics[TRAIN_METRICS_KEY] = await self._run_eval(trainer, self.train_dataset)
             if self.eval_dataset is not None:
                 metrics[EVAL_METRICS_KEY] = await self._run_eval(trainer, self.eval_dataset)
             return metrics
@@ -67,7 +67,7 @@ class EvalPPOExp(BasePPOExp):
 
 @ray.remote(num_cpus=1)
 def eval_entrypoint(cfg: DictConfig) -> dict:
-    exp = EvalPPOExp(cfg)
+    exp = EvalOnlyEntrypoint(cfg)
     return exp.run()
 
 

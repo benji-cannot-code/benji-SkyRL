@@ -64,7 +64,7 @@ class RayPPOTrainer:
         cfg: DictConfig,
         tracker: Tracking,
         tokenizer: AutoTokenizer,
-        train_dataset: PromptDataset,
+        train_dataset: Optional[PromptDataset],
         inference_engine_client: InferenceEngineClient,
         generator: GeneratorInterface,
         colocate_pg: Optional[PlacementGroup] = None,
@@ -77,7 +77,7 @@ class RayPPOTrainer:
         self.eval_dataset = eval_dataset
         self.inference_engine_client = inference_engine_client
         self.generator = generator
-        self.train_dataloader = self.build_dataloader(train_dataset, is_train=True)
+        self.train_dataloader = self.build_dataloader(train_dataset, is_train=True) if train_dataset is not None else None
         self.eval_dataloader = self.build_dataloader(eval_dataset, is_train=False) if eval_dataset is not None else None
         self.colocate_pg = colocate_pg
 
@@ -122,6 +122,7 @@ class RayPPOTrainer:
             generator=seeded_generator,
         )
         if is_train:
+            # total_training_steps is only relevant during training
             self.total_training_steps = len(dataloader) * self.cfg.trainer.epochs
             print(f"Total steps: {self.total_training_steps}")
         else:
