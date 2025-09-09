@@ -39,6 +39,3 @@ docs/_spelling/
 /skyrl-gym/dist
 
 *.log
-
-# AI tools
-/.cursor/

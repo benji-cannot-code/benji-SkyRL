@@ -1,0 +1,8 @@
+---
+globs: /skyrl-train/*
+alwaysApply: false
+---
+
+This repo uses uv to manage dependencies.
+Please include typing for all function parameters and returns.
+Please use Python 3.12 conventions.
