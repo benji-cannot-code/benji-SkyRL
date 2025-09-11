@@ -54,7 +54,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
 
         # Export to wandb if configured
         logger_cfg = self.cfg.trainer.logger
-        uses_wandb = logger_cfg == "wandb" if type(logger_cfg) is str else "wandb" in logger_cfg
+        uses_wandb = logger_cfg == "wandb" if isinstance(logger_cfg, str) else "wandb" in logger_cfg
         if uses_wandb:
             trainer.tracker.log(results, step=0)
 
