@@ -1,6 +1,6 @@
 """
 An entry point to run evaluation only:
-bash examples/generation/generate.sh
+bash examples/gsm8k/generation_only.sh
 """
 
 import asyncio
