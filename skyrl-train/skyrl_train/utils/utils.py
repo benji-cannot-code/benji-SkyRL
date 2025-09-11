@@ -116,7 +116,7 @@ def validate_batch_sizes(cfg: DictConfig):
 
 def validate_cfg(cfg: DictConfig):
 
-    # validate config related to eval only run
+    # Validate generation config separately
     validate_generator_cfg(cfg)
 
     from .ppo_utils import AdvantageEstimatorRegistry, PolicyLossRegistry
@@ -228,7 +228,6 @@ def validate_generator_cfg(cfg: DictConfig):
         ValueError: when cfg.generator.sampling_params.logprobs > 0
     """
 
-    # input length vs prompt length constraints
     if cfg.generator.max_turns == 1:
         assert (
             cfg.generator.max_input_length == cfg.trainer.max_prompt_length
@@ -238,24 +237,20 @@ def validate_generator_cfg(cfg: DictConfig):
             cfg.generator.max_input_length >= cfg.trainer.max_prompt_length
         ), "generator.max_input_length should be set greater than or equal to trainer.max_prompt_length for multi-turn generation"
 
-    # remote engines count correct
     if not cfg.generator.run_engines_locally:
         assert cfg.generator.num_inference_engines == len(
             cfg.generator.remote_inference_engine_urls
         ), "num_inference_engines should be equal to the number of remote_inference_engine_urls"
 
-    # vLLM
     if not cfg.generator.async_engine and cfg.generator.backend == "vllm":
         assert (
             cfg.generator.batched
         ), "if we are using the offline vLLM engine, we need to put generator in batched mode for faster generation"
 
-    # tracker envs (optional but helpful for early failure)
     # TODO(tgriggs): use a more modular config validation
     if cfg.trainer.logger == "wandb":
         assert os.environ.get("WANDB_API_KEY"), "`WANDB_API_KEY` is required for `wandb` logger"
 
-    # resolve override_existing_update_group just like training
     if cfg.generator.override_existing_update_group == "auto":
         if cfg.generator.backend == "vllm" and not cfg.generator.run_engines_locally:
             # remote engines can be launched separately so we `enable` by default
@@ -264,7 +259,6 @@ def validate_generator_cfg(cfg: DictConfig):
             # for local engines or sglang, we disable
             cfg.generator.override_existing_update_group = "disable"
 
-    # sglang tensor parallel size when local
     # TODO: fix once we support these features with SGLang
     if cfg.generator.backend == "sglang" and cfg.generator.run_engines_locally:
         assert cfg.generator.inference_engine_tensor_parallel_size == 1, (
@@ -272,11 +266,9 @@ def validate_generator_cfg(cfg: DictConfig):
             "Please set `inference_engine_tensor_parallel_size` to 1."
         )
 
-    # sglang multiturn
     if cfg.generator.backend == "sglang" and not cfg.generator.use_conversation_multi_turn:
         raise NotImplementedError("`use_conversation_multi_turn=False` is not supported for SGLang backend")
 
-    # sampling params logprobs restrictions (generator-level)
     if cfg.generator.sampling_params.logprobs is not None:
         assert isinstance(cfg.generator.sampling_params.logprobs, int)
         if cfg.generator.sampling_params.logprobs > 0:

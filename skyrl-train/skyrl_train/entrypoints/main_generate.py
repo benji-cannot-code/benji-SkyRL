@@ -65,8 +65,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
             logger_cfg = self.cfg.trainer.logger
             uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
             if uses_wandb and EVAL_METRICS_KEY in metrics:
-                step = getattr(trainer, "global_step", 0)
-                trainer.tracker.log(metrics[EVAL_METRICS_KEY], step=step)
+                trainer.tracker.log(metrics[EVAL_METRICS_KEY], step=0)
 
             return metrics
 

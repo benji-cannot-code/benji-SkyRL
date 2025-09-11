@@ -124,7 +124,6 @@ class RayPPOTrainer:
             generator=seeded_generator,
         )
         if is_train:
-            # total_training_steps is only relevant during training
             self.total_training_steps = len(dataloader) * self.cfg.trainer.epochs
             print(f"Total steps: {self.total_training_steps}")
         else:
@@ -141,7 +140,7 @@ class RayPPOTrainer:
         Metrics recorded in global_step 0 corresponds to evaluations before training.
 
         Args:
-            eval_only: should be set to True for eval only runs.
+            eval_only: True for eval-only (ie, non-training) runs
 
         Returns:
             A dictionary of evaluation metrics.
