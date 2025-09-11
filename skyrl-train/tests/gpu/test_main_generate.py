@@ -5,7 +5,7 @@ uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_main_generate.p
 import json
 import ray
 
-from skyrl_train.entrypoints.main_generate import EvalOnlyEntrypoint, EVAL_METRICS_KEY
+from skyrl_train.entrypoints.main_generate import EvalOnlyEntrypoint
 from skyrl_train.utils.utils import initialize_ray
 from tests.gpu.utils import get_test_actor_config, get_test_generator_input
 
@@ -53,8 +53,6 @@ def test_main_generate(tmp_path):
 
         exp = EvalOnlyEntrypoint(cfg)
         metrics = exp.run()
-
-        assert EVAL_METRICS_KEY in metrics, f"Eval metrics not found in {metrics}"
-        assert isinstance(metrics[EVAL_METRICS_KEY], dict), f"Eval metrics is not a dict: {metrics[EVAL_METRICS_KEY]}"
+        assert isinstance(metrics, dict) and len(metrics) > 0, f"Eval results not correctly computed: {metrics}"
     finally:
         ray.shutdown()

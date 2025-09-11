@@ -33,7 +33,10 @@ class EvalOnlyEntrypoint(BasePPOExp):
         trainer.eval_dataloader = trainer.build_dataloader(dataset, is_train=False)
         return await trainer.eval(eval_only=True)
 
-    def run(self) -> dict[str, dict[str, float]]:
+    def run(self) -> dict[str, float]:
+        if self.eval_dataset is None:
+            return {}
+
         tokenizer = self.tokenizer
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
@@ -57,17 +60,15 @@ class EvalOnlyEntrypoint(BasePPOExp):
                 colocate_pg=self.colocate_pg,
             )
 
-            metrics = {}
-            if self.eval_dataset is not None:
-                metrics[EVAL_METRICS_KEY] = await self._run_eval(trainer, self.eval_dataset)
+            results: dict[str, float] = await self._run_eval(trainer, self.eval_dataset)
 
             # Export to wandb if configured
             logger_cfg = self.cfg.trainer.logger
             uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
-            if uses_wandb and EVAL_METRICS_KEY in metrics:
-                trainer.tracker.log(metrics[EVAL_METRICS_KEY], step=0)
+            if uses_wandb:
+                trainer.tracker.log(results, step=0)
 
-            return metrics
+            return results
 
         return asyncio.run(_run_all_evals())
 
