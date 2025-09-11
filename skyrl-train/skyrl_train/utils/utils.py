@@ -218,7 +218,6 @@ def validate_cfg(cfg: DictConfig):
 
 def validate_generator_cfg(cfg: DictConfig):
     """Validates the correctness of generator-related config.
-    Does not care about training-related configs.
 
     Args:
         cfg (DictConfig): config to validate
