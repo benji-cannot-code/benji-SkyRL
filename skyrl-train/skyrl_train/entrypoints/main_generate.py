@@ -1,6 +1,5 @@
 """
-An entry point to run evaluation only:
-bash examples/gsm8k/generation_only.sh
+Main entrypoint for evaluation-only.
 """
 
 import asyncio
@@ -9,6 +8,7 @@ import hydra
 import ray
 from loguru import logger
 from omegaconf import DictConfig
+from typing import Any
 
 from skyrl_train.entrypoints.main_base import (
     BasePPOExp,
@@ -20,17 +20,14 @@ from skyrl_train.inference_engines.inference_engine_client import InferenceEngin
 from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.utils.utils import validate_generator_cfg, initialize_ray
 
-EVAL_METRICS_KEY = "eval"
-
 
 class EvalOnlyEntrypoint(BasePPOExp):
     def get_train_dataset(self):
         """Override to avoid requiring a train dataset for eval-only runs."""
         return None
 
-    async def run(self) -> dict[str, float]:
-        if self.eval_dataset is None:
-            return {}
+    async def run(self) -> dict[str, Any]:
+        assert self.eval_dataset is not None, "The evaluation only entrypoint requires an eval dataset is provided"
 
         tokenizer = self.tokenizer
         if self.cfg.generator.run_engines_locally:
@@ -53,13 +50,11 @@ class EvalOnlyEntrypoint(BasePPOExp):
             colocate_pg=self.colocate_pg,
         )
 
-        trainer.eval_dataset = self.eval_dataset
-        trainer.eval_dataloader = trainer.build_dataloader(self.eval_dataset, is_train=False)
-        results: dict[str, float] = await trainer.eval(eval_only=True)
+        results: dict[str, Any] = await trainer.eval(eval_only=True)
 
         # Export to wandb if configured
         logger_cfg = self.cfg.trainer.logger
-        uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
+        uses_wandb = logger_cfg == "wandb" if type(logger_cfg) is str else "wandb" in logger_cfg
         if uses_wandb:
             trainer.tracker.log(results, step=0)
 

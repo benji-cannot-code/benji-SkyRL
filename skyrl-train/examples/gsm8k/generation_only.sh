@@ -21,5 +21,7 @@ uv run --isolated --extra $INFERENCE_BACKEND \
   generator.num_inference_engines=$NUM_GPUS \
   generator.inference_engine_tensor_parallel_size=1 \
   generator.gpu_memory_utilization=0.9 \
+  generator.eval_sampling_params.max_generate_length=1024 \
+  generator.eval_sampling_params.temperature=0.7 \
   environment.env_class=gsm8k \
   "$@"
