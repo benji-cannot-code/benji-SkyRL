@@ -7,7 +7,7 @@ set -x
 # bash examples/gsm8k/generation_only.sh
 
 DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=2
+NUM_GPUS=1
 LOGGER="wandb"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm"
