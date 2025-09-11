@@ -3,6 +3,7 @@ uv run --extra dev --extra vllm --isolated pytest tests/gpu/test_main_generate.p
 """
 
 import json
+import asyncio
 import ray
 
 from skyrl_train.entrypoints.main_generate import EvalOnlyEntrypoint
@@ -52,7 +53,7 @@ def test_main_generate(tmp_path):
         cfg.trainer.eval_interval = 1
 
         exp = EvalOnlyEntrypoint(cfg)
-        metrics = exp.run()
+        metrics = asyncio.run(exp.run())
         assert isinstance(metrics, dict) and len(metrics) > 0, f"Eval results not correctly computed: {metrics}"
     finally:
         ray.shutdown()

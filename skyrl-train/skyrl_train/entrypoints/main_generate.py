@@ -28,12 +28,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
         """Override to avoid requiring a train dataset for eval-only runs."""
         return None
 
-    async def _run_eval(self, trainer: RayPPOTrainer, dataset):
-        trainer.eval_dataset = dataset
-        trainer.eval_dataloader = trainer.build_dataloader(dataset, is_train=False)
-        return await trainer.eval(eval_only=True)
-
-    def run(self) -> dict[str, float]:
+    async def run(self) -> dict[str, float]:
         if self.eval_dataset is None:
             return {}
 
@@ -44,39 +39,37 @@ class EvalOnlyEntrypoint(BasePPOExp):
             inference_engines = create_remote_inference_engines_from_config(self.cfg)
 
         inference_engine_client = InferenceEngineClient(inference_engines)
+        await inference_engine_client.wake_up()
+        generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
-        async def _run_all_evals():
-            await inference_engine_client.wake_up()
-            generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
+        trainer = RayPPOTrainer(
+            cfg=self.cfg,
+            tracker=self.get_tracker(),
+            tokenizer=tokenizer,
+            train_dataset=None,
+            eval_dataset=self.eval_dataset,
+            inference_engine_client=inference_engine_client,
+            generator=generator,
+            colocate_pg=self.colocate_pg,
+        )
 
-            trainer = RayPPOTrainer(
-                cfg=self.cfg,
-                tracker=self.get_tracker(),
-                tokenizer=tokenizer,
-                train_dataset=None,
-                eval_dataset=self.eval_dataset,
-                inference_engine_client=inference_engine_client,
-                generator=generator,
-                colocate_pg=self.colocate_pg,
-            )
+        trainer.eval_dataset = self.eval_dataset
+        trainer.eval_dataloader = trainer.build_dataloader(self.eval_dataset, is_train=False)
+        results: dict[str, float] = await trainer.eval(eval_only=True)
 
-            results: dict[str, float] = await self._run_eval(trainer, self.eval_dataset)
+        # Export to wandb if configured
+        logger_cfg = self.cfg.trainer.logger
+        uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
+        if uses_wandb:
+            trainer.tracker.log(results, step=0)
 
-            # Export to wandb if configured
-            logger_cfg = self.cfg.trainer.logger
-            uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
-            if uses_wandb:
-                trainer.tracker.log(results, step=0)
-
-            return results
-
-        return asyncio.run(_run_all_evals())
+        return results
 
 
 @ray.remote(num_cpus=1)
 def eval_entrypoint(cfg: DictConfig) -> dict:
     exp = EvalOnlyEntrypoint(cfg)
-    return exp.run()
+    return asyncio.run(exp.run())
 
 
 @hydra.main(config_path=config_dir, config_name="ppo_base_config", version_base=None)
