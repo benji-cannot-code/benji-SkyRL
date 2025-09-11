@@ -1,5 +1,5 @@
 """
-An entry point to run evaluatio only:
+An entry point to run evaluation only:
 bash examples/generation/generate.sh
 """
 
@@ -18,8 +18,7 @@ from skyrl_train.entrypoints.main_base import (
 )
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.trainer import RayPPOTrainer
-from skyrl_train.utils.utils import validate_generator_cfg
-from skyrl_train.utils.utils import initialize_ray
+from skyrl_train.utils.utils import validate_generator_cfg, initialize_ray
 
 EVAL_METRICS_KEY = "eval"
 
@@ -66,7 +65,6 @@ class EvalOnlyEntrypoint(BasePPOExp):
             logger_cfg = self.cfg.trainer.logger
             uses_wandb = (logger_cfg == "wandb") or (isinstance(logger_cfg, list) and "wandb" in logger_cfg)
             if uses_wandb and EVAL_METRICS_KEY in metrics:
-                print("yay using wandb logging to it!")
                 step = getattr(trainer, "global_step", 0)
                 trainer.tracker.log(metrics[EVAL_METRICS_KEY], step=step)
 
