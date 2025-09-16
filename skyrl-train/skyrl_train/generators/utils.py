@@ -19,7 +19,6 @@ CUSTOM_CHAT_TEMPLATES = {
         "{% endif %}"
         "{% endfor %}"
     ),
-
     # chat template for qwen3 thinking mode to remove think tokens similar to generation phase
     "qwen3_thinking": (
         "{% for message in messages %}"
