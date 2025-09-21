@@ -173,6 +173,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
                     get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
                     self.cfg.environment.env_class,
                     "train",
+                    self.global_step,
                 )
 
                 # generation phase

@@ -188,6 +188,7 @@ class RayPPOTrainer:
                         get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
                         self.cfg.environment.env_class,
                         "train",
+                        self.global_step,
                     )
 
                     # if the inference engine is already active due to continuing sampling or eval, we don't want to trigger weight management
