@@ -635,8 +635,21 @@ def prepare_generator_input(
     sampling_params: Dict[str, Any],
     default_env_class: str,
     training_phase: TrainingPhase,
-    global_step: int
-):
+    global_step: int,
+) -> Tuple[GeneratorInput, List[str]]:
+    """Prepares the generator input for training and eval
+
+    Args:
+        n_samples_per_prompt (int): how many samples to create per prompt
+        prompts (List[Any]): list of prompts
+        sampling_params (Dict[str, Any]): sampling parameters
+        default_env_class (str): env class to use if env class missing from prompts
+        training_phase (TrainingPhase): training or eval
+        global_step (int): current global step
+
+    Returns:
+        Tuple[GeneratorInput, List[str]]: generator input and list of uuids
+    """
 
     all_prompts = sum([[prompt["prompt"]] * n_samples_per_prompt for prompt in prompts], [])
     all_envs = sum(

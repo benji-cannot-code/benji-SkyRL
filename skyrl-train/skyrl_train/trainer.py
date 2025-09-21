@@ -81,7 +81,9 @@ class RayPPOTrainer:
         self.generator = generator
         self.train_dataloader = build_dataloader(self.cfg, train_dataset)
         self.total_training_steps = len(self.train_dataloader) * self.cfg.trainer.epochs
-        self.eval_dataloader = build_dataloader(self.cfg, eval_dataset, is_train=False) if eval_dataset is not None else None
+        self.eval_dataloader = (
+            build_dataloader(self.cfg, eval_dataset, is_train=False) if eval_dataset is not None else None
+        )
         self.colocate_pg = colocate_pg
 
         self.resume_mode = ResumeMode(cfg.trainer.resume_mode)
@@ -185,7 +187,7 @@ class RayPPOTrainer:
                         rand_prompts,
                         get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
                         self.cfg.environment.env_class,
-                        "train"
+                        "train",
                     )
 
                     # if the inference engine is already active due to continuing sampling or eval, we don't want to trigger weight management

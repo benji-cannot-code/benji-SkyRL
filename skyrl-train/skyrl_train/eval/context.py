@@ -4,6 +4,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoTokenizer
 from skyrl_train.generators.base import GeneratorInterface
 
+
 @dataclass
 class EvalContext:
     cfg: DictConfig
