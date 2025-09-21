@@ -43,7 +43,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
         if self.cfg.trainer.eval_interval > 0 and self.cfg.trainer.eval_before_train:
             with self.eval_weights_manager:
                 with Timer("eval", self.all_timings):
-                    eval_metrics = await self.eval()  # here
+                    eval_metrics = await self.eval()
                     self.tracker.log(eval_metrics, step=self.global_step)
 
         # main training loop
@@ -90,7 +90,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
                 ):
                     with self.eval_weights_manager:
                         with Timer("eval", self.all_timings):
-                            eval_metrics = await self.eval()  # here
+                            eval_metrics = await self.eval()
                             self.all_metrics.update(eval_metrics)
                 if self.cfg.trainer.ckpt_interval > 0 and self.global_step % self.cfg.trainer.ckpt_interval == 0:
                     with Timer("save_checkpoints", self.all_timings):

@@ -165,7 +165,7 @@ class RayPPOTrainer:
         if self.cfg.trainer.eval_interval > 0 and self.cfg.trainer.eval_before_train:
             with self.eval_weights_manager:
                 with Timer("eval", self.all_timings):
-                    eval_metrics = asyncio.run(self.eval())  # here
+                    eval_metrics = asyncio.run(self.eval())
                     self.tracker.log(eval_metrics, step=self.global_step, commit=True)
             inference_engine_is_active = True
 
@@ -279,7 +279,7 @@ class RayPPOTrainer:
                 ):
                     with self.eval_weights_manager:
                         with Timer("eval", self.all_timings):
-                            eval_metrics = asyncio.run(self.eval())  # here
+                            eval_metrics = asyncio.run(self.eval())
                             self.all_metrics.update(eval_metrics)
                     inference_engine_is_active = True
 
