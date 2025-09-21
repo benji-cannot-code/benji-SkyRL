@@ -2,9 +2,9 @@ import torch
 from tqdm import tqdm
 from typing import Dict, List, Any
 from pathlib import Path
+from loguru import logger
 
 from skyrl_train.utils import Timer
-
 
 from skyrl_train.eval.context import EvalContext
 from skyrl_train.generators.utils import concatenate_generator_outputs, get_metrics_from_generator_output
@@ -64,7 +64,7 @@ async def run_eval(context: EvalContext) -> Dict[str, float]:
     # Extract data_sources from env_extras
     concat_data_sources = [env_extra.get("data_source") for env_extra in concat_env_extras]
     vis = tokenizer.decode(generator_output["response_ids"][0])
-    print("Eval output example: ", vis)
+    logger.info(f"Eval output example: {vis}")
 
     # 2. Group data by data source and calculate per-dataset metrics
     eval_metrics = calculate_per_dataset_metrics(

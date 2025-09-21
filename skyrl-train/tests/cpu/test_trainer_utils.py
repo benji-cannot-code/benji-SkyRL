@@ -30,6 +30,7 @@ import json
 
 BasicType = Union[int, float, str, bool, type(None)]
 
+
 @pytest.fixture
 def dummy_config():
     return OmegaConf.create(
