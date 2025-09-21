@@ -17,8 +17,10 @@ from skyrl_train.entrypoints.main_base import (
     create_remote_inference_engines_from_config,
 )
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.utils.utils import validate_generator_cfg, initialize_ray
+from skyrl_train.eval.context import EvalContext
+from skyrl_train.eval.eval import run_eval
+from skyrl_train.utils.trainer_utils import build_dataloader
 
 
 class EvalOnlyEntrypoint(BasePPOExp):
@@ -30,33 +32,31 @@ class EvalOnlyEntrypoint(BasePPOExp):
         assert self.eval_dataset is not None, "The evaluation only entrypoint requires an eval dataset is provided"
 
         tokenizer = self.tokenizer
+
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
             inference_engines = create_remote_inference_engines_from_config(self.cfg)
-
-        inference_engine_client = InferenceEngineClient(inference_engines)
+        inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
         await inference_engine_client.wake_up()
         generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
-        trainer = RayPPOTrainer(
+        eval_context = EvalContext(
             cfg=self.cfg,
-            tracker=self.get_tracker(),
-            tokenizer=tokenizer,
-            train_dataset=None,
-            eval_dataset=self.eval_dataset,
-            inference_engine_client=inference_engine_client,
+            eval_dataloader=build_dataloader(self.cfg, self.eval_dataset, is_train=False),
+            tokenizer=self.tokenizer,
+            global_step=None,
             generator=generator,
-            colocate_pg=self.colocate_pg,
         )
 
-        results: dict[str, Any] = await trainer.eval(eval_only=True)
+        results: dict[str, Any] = await run_eval(eval_context)
 
         # Export to wandb if configured
         logger_cfg = self.cfg.trainer.logger
         uses_wandb = logger_cfg == "wandb" if isinstance(logger_cfg, str) else "wandb" in logger_cfg
         if uses_wandb:
-            trainer.tracker.log(results, step=0)
+            tracker = self.get_tracker()
+            tracker.log(results, step=0)
 
         return results
 

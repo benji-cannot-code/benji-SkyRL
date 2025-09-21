@@ -8,8 +8,9 @@ from skyrl_train.utils import Timer
 from skyrl_train.utils.ppo_utils import normalize_advantages_dict
 from skyrl_train.training_batch import TrainingInputBatch
 from skyrl_train.generators.base import GeneratorOutput
-from skyrl_train.utils.trainer_utils import ResumeMode
+from skyrl_train.utils.trainer_utils import ResumeMode, prepare_generator_input
 from skyrl_train.weights_manager import InferenceWeightsManager
+from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 
 
 class AsyncRayPPOTrainer(RayPPOTrainer):
@@ -42,7 +43,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
         if self.cfg.trainer.eval_interval > 0 and self.cfg.trainer.eval_before_train:
             with self.eval_weights_manager:
                 with Timer("eval", self.all_timings):
-                    eval_metrics = await self.eval()
+                    eval_metrics = await self.eval()  # here
                     self.tracker.log(eval_metrics, step=self.global_step)
 
         # main training loop
@@ -89,7 +90,7 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
                 ):
                     with self.eval_weights_manager:
                         with Timer("eval", self.all_timings):
-                            eval_metrics = await self.eval()
+                            eval_metrics = await self.eval()  # here
                             self.all_metrics.update(eval_metrics)
                 if self.cfg.trainer.ckpt_interval > 0 and self.global_step % self.cfg.trainer.ckpt_interval == 0:
                     with Timer("save_checkpoints", self.all_timings):
@@ -166,8 +167,11 @@ class AsyncRayPPOTrainer(RayPPOTrainer):
             for i, rand_prompts in enumerate(self.train_dataloader):
                 # truncate data to have even shards
                 rand_prompts = self._remove_tail_data(rand_prompts)
-                generator_input, uids = self._prepare_generator_input(
-                    self.cfg.generator.n_samples_per_prompt, rand_prompts, self.cfg.generator.sampling_params
+                generator_input, uids = prepare_generator_input(
+                    self.cfg.generator.n_samples_per_prompt,
+                    rand_prompts,
+                    get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
+                    self.cfg.environment.env_class,
                 )
 
                 # generation phase

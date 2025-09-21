@@ -9,6 +9,8 @@ set -e
 
 cd "$(dirname "$0")"  # Ensure we're in the docs directory
 
+export LC_ALL=C.UTF-8 LANG=C.UTF-8
+
 if [ "$1" = "--build-only" ]; then
     uv run --extra docs --isolated sphinx-build -b html . _build/html $@
 else
