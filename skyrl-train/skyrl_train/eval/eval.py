@@ -50,7 +50,8 @@ async def run_eval(context: EvalContext) -> Dict[str, float]:
             cfg.generator.eval_n_samples_per_prompt,
             prompts,
             get_sampling_params_for_backend(cfg.generator.backend, sampling_params),
-            cfg.environment.env_class
+            cfg.environment.env_class,
+            "eval"
         )
         generator_output: GeneratorOutput = await generator.generate(generator_input)
         validate_generator_output(generator_input, generator_output)

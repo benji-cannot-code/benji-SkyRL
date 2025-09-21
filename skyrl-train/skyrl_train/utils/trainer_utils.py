@@ -12,7 +12,7 @@ import torch
 import numpy as np
 from collections import defaultdict
 from skyrl_train.generators.utils import get_metrics_from_generator_output, concatenate_generator_outputs
-from skyrl_train.generators.base import GeneratorInput, GeneratorOutput
+from skyrl_train.generators.base import GeneratorInput, GeneratorOutput, TrajectoryID, BatchMetadata, TrainingPhase
 from transformers import AutoTokenizer
 from pathlib import Path
 from skyrl_train.utils import io
@@ -630,7 +630,12 @@ def validate_generator_output(input_batch: GeneratorInput, generator_output: Gen
 
 
 def prepare_generator_input(
-    n_samples_per_prompt: int, prompts: List[Any], sampling_params: Dict[str, Any], default_env_class: str
+    n_samples_per_prompt: int,
+    prompts: List[Any],
+    sampling_params: Dict[str, Any],
+    default_env_class: str,
+    training_phase: TrainingPhase,
+    global_step: int
 ):
 
     all_prompts = sum([[prompt["prompt"]] * n_samples_per_prompt for prompt in prompts], [])
@@ -647,11 +652,25 @@ def prepare_generator_input(
         [[prompt["env_extras"]] * n_samples_per_prompt for prompt in prompts],
         [],
     )
+
+    # Create TrajectoryID objects - one UID per row, repetition_id for multiple samples
+    trajectory_ids = []
+    uids = []
+    for _, prompt in enumerate(prompts):
+        uid: str = prompt["uid"]
+
+        # Create TrajectoryID for each repetition
+        for repetition_id in range(n_samples_per_prompt):
+            trajectory_ids.append(TrajectoryID(instance_id=uid, repetition_id=repetition_id))
+            uids.append(uid)
+
     generator_input: GeneratorInput = {
         "prompts": all_prompts,
         "env_classes": all_envs,
         "env_extras": env_extras,
         "sampling_params": sampling_params,
+        "trajectory_ids": trajectory_ids,
+        "batch_metadata": BatchMetadata(global_step=global_step, training_phase=training_phase),
     }
 
     # uids for each sample - NOTE: we assume that generate returns samples in the same order as passed in

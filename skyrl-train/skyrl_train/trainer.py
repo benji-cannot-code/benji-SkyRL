@@ -88,6 +88,7 @@ class RayPPOTrainer:
 
         self.all_metrics = {}
         self.all_timings = {}
+        self.global_step = 0
 
         # initialized in `build_models`
         self.policy_model: PPORayActorGroup = None
@@ -131,44 +132,40 @@ class RayPPOTrainer:
         Main training loop for PPO
         """
 
-        self.global_step = 0
         self.weights_manager = InferenceWeightsManager(
-            self.policy_model, self.inference_engine_client, self.cfg.trainer.placement.colocate_all
+            self.policy_model,
+            self.inference_engine_client,
+            self.cfg.trainer.placement.colocate_all,
+            sleep_on_exit=True,
         )
-        # NOTE(Charlie): sglang's engine needs to sync weights after wake up. see https://github.com/sgl-project/sglang/issues/7939
-        # Change it to True after sglang fixes the issue.
-        sync_before_eval = self.cfg.trainer.placement.colocate_all and self.cfg.generator.backend == "sglang"
         self.eval_weights_manager = InferenceWeightsManager(
             self.policy_model,
             self.inference_engine_client,
             self.cfg.trainer.placement.colocate_all,
-            no_sync=not sync_before_eval,
+            sleep_on_exit=False,
         )
 
-        # Load checkpoint state if resumption is enabled
+        # Initialize weight sync state between policy model and inference engines.
+        with Timer("init_weight_sync_state"):
+            self.init_weight_sync_state()
+
+        # Load policy model to GPU before loading checkpoint.
+        if self.cfg.trainer.placement.colocate_all:
+            self.policy_model.backload_to_gpu()
+
+        # Load checkpoint state if resumption is enabled.
         if self.resume_mode != ResumeMode.NONE:
             with Timer("load_checkpoints"):
-                self.load_checkpoints()
-                logger.info(f"Resumed training from global_step {self.global_step}")
-
-        # create rank0 policy model and inference_engines groups, then broadcast weights to inference_engines
-        with Timer("setup_policy_and_generator"):
-            self.setup_policy_and_generator()
-            if self.cfg.trainer.placement.colocate_all:
-                self.policy_model.backload_to_gpu()
+                self.global_step = self.load_checkpoints()
 
         # Eval before training
+        inference_engine_is_active = False
         if self.cfg.trainer.eval_interval > 0 and self.cfg.trainer.eval_before_train:
             with self.eval_weights_manager:
                 with Timer("eval", self.all_timings):
                     eval_metrics = asyncio.run(self.eval())  # here
                     self.tracker.log(eval_metrics, step=self.global_step, commit=True)
-            # Policy model is backloaded to GPU after eval
-            if self.cfg.trainer.placement.colocate_all:
-                self.policy_model.backload_to_gpu()
-
-        # setup for dynamic sampling
-        keep_sampling = False
+            inference_engine_is_active = True
 
         # initialize kl controller
         if self.cfg.trainer.algorithm.use_kl_in_reward:
@@ -188,13 +185,17 @@ class RayPPOTrainer:
                         rand_prompts,
                         get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
                         self.cfg.environment.env_class,
+                        "train"
                     )
 
-                    # if we are continuing sampling, we don't want to trigger weight management
-                    weights_manager = ConditionalWeightsManager(self.weights_manager, not keep_sampling)
+                    # if the inference engine is already active due to continuing sampling or eval, we don't want to trigger weight management
+                    weights_manager = ConditionalWeightsManager(
+                        self.weights_manager, condition=not inference_engine_is_active
+                    )
 
-                    # NOTE: Policy model is on GPU at the beginning of each training step
-                    # After exiting the context manager, policy model is on CPU with `colocate_all` enabled.
+                    # NOTE: Policy model is on GPU at the beginning of each training step, unless eval was run prior to the step
+                    # in which case the inference engine is active and the policy model is on CPU.
+                    # After exiting the context manager, the policy model is on CPU with `colocate_all` enabled
                     # Policy model stays on cpu because the training loop will carefully backload different models depending on colocation strategy
                     with weights_manager:
                         # 1.1 generation phase
@@ -205,11 +206,16 @@ class RayPPOTrainer:
                         if self.cfg.trainer.algorithm.dynamic_sampling.type is not None:
                             generator_output, uids, keep_sampling = self.handle_dynamic_sampling(generator_output, uids)
                             # update weights manager condition to ensure we trigger sleep only when we are not continuing sampling
-                            weights_manager.update_condition(not keep_sampling)
+                            weights_manager.update_condition(condition=not keep_sampling)
+                            inference_engine_is_active = keep_sampling
                             if keep_sampling:  # continue sampling
                                 # update progress bar for current batch (but not global step)
                                 pbar.update(1)
                                 continue
+
+                        # if we are not continuing sampling, we trigger sleep and mark inference engine as inactive
+                        weights_manager.update_condition(True)
+                        inference_engine_is_active = False
 
                     # 1.2 postprocess rewards
                     with Timer("postprocess_generator_output", self.all_timings):
@@ -253,7 +259,15 @@ class RayPPOTrainer:
                     with Timer("train_critic_and_policy", self.all_timings):
                         status = self.train_critic_and_policy(training_input)
 
-                # 5. set logs
+                # 5. conditionally save checkpoints and hf model
+                if self.cfg.trainer.ckpt_interval > 0 and self.global_step % self.cfg.trainer.ckpt_interval == 0:
+                    with Timer("save_checkpoints", self.all_timings):
+                        self.save_checkpoints()
+                if self.cfg.trainer.hf_save_interval > 0 and self.global_step % self.cfg.trainer.hf_save_interval == 0:
+                    with Timer("save_hf_model", self.all_timings):
+                        self.save_models()
+
+                # 6. set logs
                 logger.info(status)
                 # log epoch info
                 self.all_metrics.update({"trainer/epoch": epoch, "trainer/global_step": self.global_step})
@@ -265,16 +279,7 @@ class RayPPOTrainer:
                         with Timer("eval", self.all_timings):
                             eval_metrics = asyncio.run(self.eval())  # here
                             self.all_metrics.update(eval_metrics)
-                    # Policy model is backloaded to GPU after eval
-                    if self.cfg.trainer.placement.colocate_all:
-                        self.policy_model.backload_to_gpu()
-
-                if self.cfg.trainer.ckpt_interval > 0 and self.global_step % self.cfg.trainer.ckpt_interval == 0:
-                    with Timer("save_checkpoints", self.all_timings):
-                        self.save_checkpoints()
-                if self.cfg.trainer.hf_save_interval > 0 and self.global_step % self.cfg.trainer.hf_save_interval == 0:
-                    with Timer("save_hf_model", self.all_timings):
-                        self.save_models()
+                    inference_engine_is_active = True
 
                 log_payload = {
                     **self.all_metrics,
@@ -291,6 +296,11 @@ class RayPPOTrainer:
 
                 del training_input, generator_output
 
+            # Ensure that the policy model is on GPU at the end of every epoch
+            if inference_engine_is_active and self.cfg.trainer.placement.colocate_all:
+                asyncio.run(self.inference_engine_client.sleep())
+                self.policy_model.backload_to_gpu()
+                inference_engine_is_active = False
             if self.cfg.trainer.update_ref_every_epoch and self.ref_model is not None:
                 with Timer("update_ref_with_policy", self.all_timings):
                     self.update_ref_with_policy()
@@ -543,7 +553,7 @@ class RayPPOTrainer:
 
         logger.info("init policy/ref/critic/reward models done")
 
-    def setup_policy_and_generator(self):
+    def init_weight_sync_state(self):
         """
         Setup the connection between policy model and inference engine for weight syncing.
         """
@@ -617,6 +627,7 @@ class RayPPOTrainer:
             be awake (i.e. on GPU).
         - after calling this method, the same model placement still holds.
         """
+        # NOTE: we assume that .generate returns samples in the same order as passed in
         generator_output: GeneratorOutput = await self.generator.generate(input_batch)
 
         # add rollout metrics to self.all_metrics
@@ -1075,8 +1086,7 @@ class RayPPOTrainer:
         ray.get(
             self.policy_model.async_run_ray_method(
                 "pass_through",
-                "save_ckpt",
-                global_step=self.global_step,
+                "save_checkpoint",
                 ckpt_dir=policy_save_dir,
                 tokenizer=self.tokenizer,
             )
@@ -1091,8 +1101,7 @@ class RayPPOTrainer:
             ray.get(
                 self.critic_model.async_run_ray_method(
                     "pass_through",
-                    "save_ckpt",
-                    global_step=self.global_step,
+                    "save_checkpoint",
                     ckpt_dir=critic_save_dir,
                     tokenizer=self.tokenizer,
                 )
@@ -1195,7 +1204,6 @@ class RayPPOTrainer:
         global_step = extract_step_from_path(Path(checkpoint_path))
         if global_step == -1:
             raise ValueError(f"Checkpoint path {checkpoint_path} is not a valid checkpoint path")
-        self.global_step = global_step
         logger.info(f"Resuming from global_step: {global_step}")
 
         # Define paths for different checkpoint components
@@ -1235,7 +1243,7 @@ class RayPPOTrainer:
         _ = ray.get(
             self.policy_model.async_run_ray_method(
                 "pass_through",
-                "load_ckpt",
+                "load_checkpoint",
                 ckpt_dir=policy_ckpt_dir,
                 load_optimizer_states=True,
                 load_lr_scheduler_states=True,
@@ -1249,7 +1257,7 @@ class RayPPOTrainer:
             _ = ray.get(
                 self.critic_model.async_run_ray_method(
                     "pass_through",
-                    "load_ckpt",
+                    "load_checkpoint",
                     ckpt_dir=critic_ckpt_dir,
                     load_optimizer_states=True,
                     load_lr_scheduler_states=True,
