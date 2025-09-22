@@ -6,7 +6,11 @@ from loguru import logger
 
 from skyrl_train.utils import Timer
 
-from skyrl_train.generators.utils import concatenate_generator_outputs, get_metrics_from_generator_output, prepare_generator_input
+from skyrl_train.generators.utils import (
+    concatenate_generator_outputs,
+    get_metrics_from_generator_output,
+    prepare_generator_input,
+)
 from skyrl_train.generators.base import (
     GeneratorOutput,
     GeneratorInterface,
@@ -44,7 +48,6 @@ async def evaluation(
     Returns:
         Dict[str, float]: evaluation metrics
     """
-
 
     # 1. Get all generator outputs
     generator_outputs: List[GeneratorOutput] = []
