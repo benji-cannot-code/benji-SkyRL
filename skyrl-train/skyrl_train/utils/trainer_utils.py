@@ -4,7 +4,6 @@ import ray
 from skyrl_train.workers.worker import PPORayActorGroup
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 import os
-import uuid
 from loguru import logger
 from omegaconf import DictConfig
 import json
@@ -686,8 +685,6 @@ def prepare_generator_input(
         "batch_metadata": BatchMetadata(global_step=global_step, training_phase=training_phase),
     }
 
-    # uids for each sample - NOTE: we assume that generate returns samples in the same order as passed in
-    uids = sum([[str(uuid.uuid4())] * n_samples_per_prompt for _ in prompts], [])
     return generator_input, uids
 
 
