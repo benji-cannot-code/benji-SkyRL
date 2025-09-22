@@ -57,7 +57,7 @@ from skyrl_train.utils.trainer_utils import (
 )
 from skyrl_train.utils.utils import configure_ray_worker_logging
 from skyrl_train.eval.context import EvalContext
-from skyrl_train.eval.eval import run_eval
+from skyrl_train.eval.eval import evaluation
 
 
 class RayPPOTrainer:
@@ -126,7 +126,7 @@ class RayPPOTrainer:
             global_step=self.global_step,
             generator=self.generator,
         )
-        eval_metrics = await run_eval(eval_context)
+        eval_metrics = await evaluation(eval_context)
         return eval_metrics
 
     def train(self):
