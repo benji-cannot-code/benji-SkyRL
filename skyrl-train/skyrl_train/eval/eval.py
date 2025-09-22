@@ -21,8 +21,8 @@ from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 
 
 @torch.no_grad()
-async def run_eval(context: EvalContext) -> Dict[str, float]:
-    """Runs an evaluation
+async def evaluation(context: EvalContext) -> Dict[str, float]:
+    """Runs generation and evaluation of trajectories.
 
     Args:
         context (EvalContext): context needed for the eval
