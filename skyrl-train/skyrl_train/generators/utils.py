@@ -155,8 +155,8 @@ def get_rollout_metrics(responses: List[List[int]], rewards: Union[List[float], 
 
 
 def prepare_generator_input(
-    n_samples_per_prompt: int,
     prompts: List[Any],
+    n_samples_per_prompt: int,
     sampling_params: Dict[str, Any],
     default_env_class: str,
     training_phase: TrainingPhase,

@@ -45,8 +45,8 @@ async def evaluation(context: EvalContext) -> Dict[str, float]:
     for _, prompts in enumerate(eval_dataloader):
         pbar.update(1)
         generator_input, uids = prepare_generator_input(
-            cfg.generator.eval_n_samples_per_prompt,
             prompts,
+            cfg.generator.eval_n_samples_per_prompt,
             get_sampling_params_for_backend(cfg.generator.backend, sampling_params),
             cfg.environment.env_class,
             "eval",

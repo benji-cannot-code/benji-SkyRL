@@ -182,8 +182,8 @@ class RayPPOTrainer:
                     # 0. truncate data to have even shards
                     rand_prompts = self._remove_tail_data(rand_prompts)
                     generator_input, uids = prepare_generator_input(
-                        self.cfg.generator.n_samples_per_prompt,
                         rand_prompts,
+                        self.cfg.generator.n_samples_per_prompt,
                         get_sampling_params_for_backend(self.cfg.generator.backend, self.cfg.generator.sampling_params),
                         self.cfg.environment.env_class,
                         "train",
