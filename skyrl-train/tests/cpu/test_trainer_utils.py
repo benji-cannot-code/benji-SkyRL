@@ -908,3 +908,31 @@ def test_build_dataloader_seeding(dummy_config):
     assert (
         first_batch1 != first_batch3
     ), f"Different seeds should produce different first batches, but both gave {first_batch1}"
+
+
+def test_validate_generator_output_invalid_rewards():
+    """Test validate_generator_output raises AssertionError when rewards is neither List[float-like] nor List[List[float-like]]."""
+    input_batch = GeneratorInput(
+        prompts=["prompt1", "prompt2"], env_classes=["env1", "env2"], env_extras=None, sampling_params=None
+    )
+
+    generator_output = GeneratorOutput(
+        prompt_token_ids=[[1, 2, 3], [4, 5, 6]],
+        response_ids=[[7, 8], [9, 10]],
+        rewards=[[0.5, 0.6], 0.7],
+        loss_masks=[[1, 1], [1, 0]],
+        stop_reasons=["eos", "eos"],
+        rollout_logprobs=None,
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match=re.escape("rewards must be `List[float]` or `List[List[float]]`"),
+    ):
+        validate_generator_output(input_batch, generator_output)
+
+    generator_output["rewards"] = [0.5, 0.7]
+    validate_generator_output(input_batch, generator_output)
+
+    generator_output["rewards"] = [[0.5, 0.6], [0.7, 0.8]]
+    validate_generator_output(input_batch, generator_output)
