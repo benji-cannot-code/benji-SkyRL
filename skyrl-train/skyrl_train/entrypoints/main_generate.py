@@ -18,8 +18,7 @@ from skyrl_train.entrypoints.main_base import (
 )
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.utils.utils import validate_generator_cfg, initialize_ray
-from skyrl_train.eval.context import EvalContext
-from skyrl_train.eval.eval import evaluation
+from skyrl_train.eval import evaluation
 from skyrl_train.utils.trainer_utils import build_dataloader
 
 
@@ -41,15 +40,13 @@ class EvalOnlyEntrypoint(BasePPOExp):
         await inference_engine_client.wake_up()
         generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
-        eval_context = EvalContext(
+        results: dict[str, Any] = await evaluation(
             cfg=self.cfg,
             eval_dataloader=build_dataloader(self.cfg, self.eval_dataset, is_train=False),
             tokenizer=self.tokenizer,
             global_step=None,
             generator=generator,
         )
-
-        results: dict[str, Any] = await evaluation(eval_context)
 
         # Export to wandb if configured
         logger_cfg = self.cfg.trainer.logger

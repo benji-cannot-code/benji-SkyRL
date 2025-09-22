@@ -6,10 +6,10 @@ from loguru import logger
 
 from skyrl_train.utils import Timer
 
-from skyrl_train.eval.context import EvalContext
 from skyrl_train.generators.utils import concatenate_generator_outputs, get_metrics_from_generator_output, prepare_generator_input
 from skyrl_train.generators.base import (
     GeneratorOutput,
+    GeneratorInterface,
 )
 from skyrl_train.utils.trainer_utils import (
     calculate_per_dataset_metrics,
@@ -18,22 +18,33 @@ from skyrl_train.utils.trainer_utils import (
 )
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 
+from omegaconf import DictConfig
+from torchdata.stateful_dataloader import StatefulDataLoader
+from transformers import AutoTokenizer
+
 
 @torch.no_grad()
-async def evaluation(context: EvalContext) -> Dict[str, float]:
+async def evaluation(
+    cfg: DictConfig,
+    eval_dataloader: StatefulDataLoader | None,
+    tokenizer: AutoTokenizer,
+    global_step: int | None,
+    generator: GeneratorInterface,
+) -> Dict[str, float]:
     """Runs generation and evaluation of trajectories.
 
     Args:
-        context (EvalContext): context needed for the eval
+        cfg (DictConfig): config
+        eval_dataloader (StatefulDataLoader | None): dataloader of the eval dataset
+        tokenizer (AutoTokenizer): tokenizer to use
+        global_step (int | None): current global step,
+            None if this is ran without a training context (eg eval-only)
+        generator (GeneratorInterface): generator to use
 
     Returns:
         Dict[str, float]: evaluation metrics
     """
-    cfg = context.cfg
-    eval_dataloader = context.eval_dataloader
-    tokenizer = context.tokenizer
-    global_step = context.global_step
-    generator = context.generator
+
 
     # 1. Get all generator outputs
     generator_outputs: List[GeneratorOutput] = []
