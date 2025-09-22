@@ -7,14 +7,13 @@ from loguru import logger
 from skyrl_train.utils import Timer
 
 from skyrl_train.eval.context import EvalContext
-from skyrl_train.generators.utils import concatenate_generator_outputs, get_metrics_from_generator_output
+from skyrl_train.generators.utils import concatenate_generator_outputs, get_metrics_from_generator_output, prepare_generator_input
 from skyrl_train.generators.base import (
     GeneratorOutput,
 )
 from skyrl_train.utils.trainer_utils import (
     calculate_per_dataset_metrics,
     dump_per_dataset_eval_results,
-    prepare_generator_input,
     validate_generator_output,
 )
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend

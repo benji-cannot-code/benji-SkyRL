@@ -8,7 +8,8 @@ from skyrl_train.utils import Timer
 from skyrl_train.utils.ppo_utils import normalize_advantages_dict
 from skyrl_train.training_batch import TrainingInputBatch
 from skyrl_train.generators.base import GeneratorOutput
-from skyrl_train.utils.trainer_utils import ResumeMode, prepare_generator_input
+from skyrl_train.utils.trainer_utils import ResumeMode
+from skyrl_train.generators.utils import prepare_generator_input
 from skyrl_train.weights_manager import InferenceWeightsManager
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 

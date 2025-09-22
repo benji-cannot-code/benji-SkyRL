@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from collections import defaultdict
 from skyrl_train.generators.utils import get_metrics_from_generator_output, concatenate_generator_outputs
-from skyrl_train.generators.base import GeneratorInput, GeneratorOutput, TrajectoryID, BatchMetadata, TrainingPhase
+from skyrl_train.generators.base import GeneratorInput, GeneratorOutput
 from transformers import AutoTokenizer
 from pathlib import Path
 from skyrl_train.utils import io
@@ -626,66 +626,6 @@ def validate_generator_output(input_batch: GeneratorInput, generator_output: Gen
     # loss masks should be non-zero for at least one element for trainer
     if np.concatenate(generator_output["loss_masks"]).sum() == 0:
         logger.warning("All outputs are loss masked, which may lead to NaN loss, please check your generation logic!!")
-
-
-def prepare_generator_input(
-    n_samples_per_prompt: int,
-    prompts: List[Any],
-    sampling_params: Dict[str, Any],
-    default_env_class: str,
-    training_phase: TrainingPhase,
-    global_step: int,
-) -> Tuple[GeneratorInput, List[str]]:
-    """Prepares the generator input for training and eval
-
-    Args:
-        n_samples_per_prompt (int): how many samples to create per prompt
-        prompts (List[Any]): list of prompts
-        sampling_params (Dict[str, Any]): sampling parameters
-        default_env_class (str): env class to use if env class missing from prompts
-        training_phase (TrainingPhase): training or eval
-        global_step (int): current global step
-
-    Returns:
-        Tuple[GeneratorInput, List[str]]: generator input and list of uuids
-    """
-
-    all_prompts = sum([[prompt["prompt"]] * n_samples_per_prompt for prompt in prompts], [])
-    all_envs = sum(
-        [
-            [prompt["env_class"] if prompt["env_class"] is not None else default_env_class] * n_samples_per_prompt
-            for prompt in prompts
-        ],
-        [],
-    )
-
-    # all the other columns are env_extras
-    env_extras = sum(
-        [[prompt["env_extras"]] * n_samples_per_prompt for prompt in prompts],
-        [],
-    )
-
-    # Create TrajectoryID objects - one UID per row, repetition_id for multiple samples
-    trajectory_ids = []
-    uids = []
-    for _, prompt in enumerate(prompts):
-        uid: str = prompt["uid"]
-
-        # Create TrajectoryID for each repetition
-        for repetition_id in range(n_samples_per_prompt):
-            trajectory_ids.append(TrajectoryID(instance_id=uid, repetition_id=repetition_id))
-            uids.append(uid)
-
-    generator_input: GeneratorInput = {
-        "prompts": all_prompts,
-        "env_classes": all_envs,
-        "env_extras": env_extras,
-        "sampling_params": sampling_params,
-        "trajectory_ids": trajectory_ids,
-        "batch_metadata": BatchMetadata(global_step=global_step, training_phase=training_phase),
-    }
-
-    return generator_input, uids
 
 
 def build_dataloader(cfg: DictConfig, dataset: PromptDataset, is_train=True) -> StatefulDataLoader:

@@ -21,7 +21,7 @@ from skyrl_train.generators.base import (
     GeneratorOutput,
     GeneratorInterface,
 )
-from skyrl_train.generators.utils import get_metrics_from_generator_output
+from skyrl_train.generators.utils import get_metrics_from_generator_output, prepare_generator_input
 from skyrl_train.dataset.preprocess import (
     convert_prompts_responses_to_batch_tensors,
 )
@@ -52,7 +52,6 @@ from skyrl_train.utils.trainer_utils import (
     GLOBAL_STEP_PREFIX,
     ResumeMode,
     DynamicSamplingState,
-    prepare_generator_input,
     build_dataloader,
 )
 from skyrl_train.utils.utils import configure_ray_worker_logging
@@ -79,7 +78,7 @@ class RayPPOTrainer:
         self.eval_dataset = eval_dataset
         self.inference_engine_client = inference_engine_client
         self.generator = generator
-        self.train_dataloader = build_dataloader(self.cfg, train_dataset)
+        self.train_dataloader = build_dataloader(self.cfg, train_dataset, is_train=True)
         self.total_training_steps = len(self.train_dataloader) * self.cfg.trainer.epochs
         self.eval_dataloader = (
             build_dataloader(self.cfg, eval_dataset, is_train=False) if eval_dataset is not None else None
