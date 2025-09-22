@@ -327,7 +327,6 @@ class RayPPOTrainer:
             dp_size = math.lcm(dp_size, self.reward_model.actor_infos[0].rank.dp_size)
         return entries[: (len(entries) // dp_size) * dp_size]
 
-
     def build_models(self, PolicyWorker, CriticWorker, RefWorker, RewardWorker=None):
         """
         Initialize the actors for training, and handle colocation logic
