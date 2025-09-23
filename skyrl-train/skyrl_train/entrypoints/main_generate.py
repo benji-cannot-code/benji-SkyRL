@@ -35,7 +35,8 @@ class EvalOnlyEntrypoint(BasePPOExp):
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
-            inference_engines = create_remote_inference_engines_from_config(self.cfg)
+            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
+
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
         await inference_engine_client.wake_up()
         generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
