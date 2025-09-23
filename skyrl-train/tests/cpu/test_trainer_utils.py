@@ -26,7 +26,7 @@ import re
 
 from unittest.mock import Mock, patch, mock_open
 import json
-from tests.cpu.util_functions import dummy_config # noqa: F401
+from tests.cpu.util_functions import dummy_config  # noqa: F401
 
 BasicType = Union[int, float, str, bool, type(None)]
 

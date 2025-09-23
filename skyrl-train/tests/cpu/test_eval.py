@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 
 from skyrl_train.evaluate import evaluate
 from skyrl_train.generators.base import GeneratorInterface, GeneratorOutput
-from tests.cpu.util_functions import dummy_config # noqa: F401
+from tests.cpu.util_functions import dummy_config  # noqa: F401
 
 
 class DummyStatefulDataLoader:
