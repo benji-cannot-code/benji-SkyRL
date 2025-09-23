@@ -17,7 +17,7 @@ import numpy as np
 from skyrl_train.workers.worker import PolicyWorkerBase, CriticWorkerBase
 from skyrl_train.workers.worker_utils import BatchIterator
 from skyrl_train.utils.utils import validate_batch_sizes
-from tests.cpu.utils import dummy_config
+from tests.cpu.util_functions import dummy_config  # noqa: F401
 
 
 class DummyDataset:

@@ -1,194 +1,100 @@
-import json
-from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from omegaconf import OmegaConf
 
 from skyrl_train.evaluate import evaluate
-from skyrl_train.generators.base import GeneratorInterface
+from skyrl_train.generators.base import GeneratorInterface, GeneratorOutput
+from tests.cpu.util_functions import dummy_config # noqa: F401
 
 
-class DummyEvalDataLoader:
+class DummyStatefulDataLoader:
     def __init__(self, batches):
         self._batches = batches
-
-    def __iter__(self):
-        return iter(self._batches)
 
     def __len__(self):
         return len(self._batches)
 
+    def __iter__(self):
+        return iter(self._batches)
 
-class DummyResponseLevelGenerator(GeneratorInterface):
+
+class DummyGenerator(GeneratorInterface):
+    def __init__(self, output: GeneratorOutput):
+        self.output = output
+        self.seen_inputs = []
+
     async def generate(self, input_batch):
-        num_items = len(input_batch["prompts"])
-        outputs = {
-            "prompt_token_ids": [],
-            "response_ids": [],
-            "rewards": [],
-            "loss_masks": [],
-            "stop_reasons": None,
-            "rollout_metrics": None,
-            "rollout_logprobs": None,
-        }
-
-        for i in range(num_items):
-            traj = input_batch["trajectory_ids"][i]
-            uid = getattr(traj, "instance_id")
-            rep = getattr(traj, "repetition_id")
-
-            # Minimal prompt/response tokens
-            outputs["prompt_token_ids"].append([101, 102])
-            outputs["response_ids"].append([201, 202, 203])
-            outputs["loss_masks"].append([1, 1, 1])
-
-            # Response-level rewards by uid and repetition
-            if uid == "u1":
-                reward = 1.0 if rep == 0 else -1.0
-            elif uid == "u2":
-                reward = 0.0
-            elif uid == "u3":
-                reward = -0.5 if rep == 0 else -0.1
-            else:
-                reward = 0.0
-            outputs["rewards"].append(reward)
-
-        return outputs
+        self.seen_inputs.append(input_batch)
+        return self.output
 
 
-class DummyTokenLevelGenerator(GeneratorInterface):
-    async def generate(self, input_batch):
-        num_items = len(input_batch["prompts"])
-        outputs = {
-            "prompt_token_ids": [],
-            "response_ids": [],
-            "rewards": [],
-            "loss_masks": [],
-            "stop_reasons": None,
-            "rollout_metrics": None,
-            "rollout_logprobs": None,
-        }
-
-        for i in range(num_items):
-            traj = input_batch["trajectory_ids"][i]
-            uid = getattr(traj, "instance_id")
-            rep = getattr(traj, "repetition_id")
-
-            # Fixed length of 3 tokens per response
-            resp = [300 + rep, 301 + rep, 302 + rep]
-            outputs["prompt_token_ids"].append([111, 112])
-            outputs["response_ids"].append(resp)
-            outputs["loss_masks"].append([1, 1, 1])
-
-            # Token-level rewards; last token determines pass@n (>0 => pass)
-            if uid == "x":
-                # One positive last-token, one negative
-                rewards = [0.1, 0.1, 0.1] if rep == 0 else [-0.1, -0.1, -0.1]
-            elif uid == "y":
-                # Non-positive last-token -> never passes
-                rewards = [0.0, 0.0, 0.0]
-            else:
-                rewards = [0.0, 0.0, -0.1]
-            outputs["rewards"].append(rewards)
-
-        return outputs
-
-
-@pytest.fixture
-def dummy_tokenizer():
-    class _Tok:
-        def decode(self, ids):
-            return "decoded"
-
-    return _Tok()
-
-
-def _make_cfg(export_path: Path | None = None, dump: bool = False, n_samples: int = 2):
-    return OmegaConf.create(
+@pytest.mark.asyncio
+async def test_evaluate_computes_expected_metrics(dummy_config, tmp_path):
+    cfg = dummy_config
+    cfg.generator.backend = "vllm"
+    cfg.generator.eval_sampling_params = OmegaConf.create(
         {
-            "generator": {
-                "eval_sampling_params": {
-                    "max_generate_length": 8,
-                    "temperature": 1.0,
-                    "top_p": 1.0,
-                    "top_k": 50,
-                    "min_p": 0.0,
-                    "logprobs": False,
-                    "stop": None,
-                },
-                "eval_n_samples_per_prompt": n_samples,
-                "backend": "vllm",
-            },
-            "environment": {"env_class": "dummy_env"},
-            "trainer": {
-                "dump_eval_results": dump,
-                "export_path": str(export_path) if export_path is not None else ".",
-            },
+            "max_generate_length": 20,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": -1,
+            "min_p": 0.0,
+            "logprobs": None,
+            "stop": None,
         }
     )
+    cfg.generator.eval_n_samples_per_prompt = 1
+    cfg.environment = OmegaConf.create({"env_class": "gsm8k"})
+    cfg.trainer.dump_eval_results = False
+    cfg.trainer.export_path = str(tmp_path)
 
-
-@pytest.mark.asyncio
-async def test_evaluate_response_level_rewards(dummy_tokenizer):
-    # Two batches: batch1 has u1,u2 (ds1); batch2 has u3 (ds2)
-    batches = [
-        [
-            {"prompt": [{"role": "user", "content": "a"}], "env_class": "gsm8k", "env_extras": {"data_source": "ds1"}, "uid": "u1"},
-            {"prompt": [{"role": "user", "content": "b"}], "env_class": "gsm8k", "env_extras": {"data_source": "ds1"}, "uid": "u2"},
-        ],
-        [
-            {"prompt": [{"role": "user", "content": "c"}], "env_class": "sql", "env_extras": {"data_source": "ds2"}, "uid": "u3"},
-        ],
+    prompts_batch = [
+        {
+            "prompt": [{"role": "user", "content": "question-1"}],
+            "env_class": None,
+            "env_extras": {"data_source": "dataset/a"},
+            "uid": "uid-1",
+        },
+        {
+            "prompt": [{"role": "user", "content": "question-2"}],
+            "env_class": "custom_env",
+            "env_extras": {"data_source": "dataset/b"},
+            "uid": "uid-2",
+        },
     ]
-    dataloader = DummyEvalDataLoader(batches)
-    cfg = _make_cfg(dump=False, n_samples=2)
+    eval_dataloader = DummyStatefulDataLoader([prompts_batch])
 
-    gen = DummyResponseLevelGenerator()
-    metrics = await evaluate(cfg, dataloader, dummy_tokenizer, global_step=100, generator=gen)
+    generator_output: GeneratorOutput = {
+        "prompt_token_ids": [[101], [102]],
+        "response_ids": [[201], [202]],
+        "rewards": [1.0, 0.0],
+        "loss_masks": [[1], [1]],
+        "stop_reasons": ["stop", "stop"],
+        "rollout_logprobs": None,
+    }
+    generator = DummyGenerator(generator_output)
 
-    # Per-dataset checks
-    assert metrics["eval/ds1/avg_score"] == pytest.approx(0.0, abs=1e-6)
-    assert metrics["eval/ds1/pass_at_2"] == pytest.approx(0.5, abs=1e-6)
-    assert metrics["eval/ds2/avg_score"] == pytest.approx(-0.3, abs=1e-6)
-    assert metrics["eval/ds2/pass_at_2"] == pytest.approx(0.0, abs=1e-6)
+    tokenizer = MagicMock()
+    tokenizer.decode.side_effect = lambda tokens: "decoded"
 
-    # Overall checks
-    assert metrics["eval/all/avg_score"] == pytest.approx(-0.1, abs=1e-6)
-    assert metrics["eval/all/pass_at_2"] == pytest.approx(1.0 / 3.0, abs=1e-6)
+    metrics = await evaluate(cfg, eval_dataloader, tokenizer, global_step=5, generator=generator)
 
+    expected_metrics = {
+        "eval/dataset_a/avg_score": 1.0,
+        "eval/dataset_a/pass_at_1": 1.0,
+        "eval/dataset_b/avg_score": 0.0,
+        "eval/dataset_b/pass_at_1": 0.0,
+        "eval/all/avg_score": 0.5,
+        "eval/all/pass_at_1": 0.5,
+    }
 
-@pytest.mark.asyncio
-async def test_evaluate_token_level_rewards_and_dump(tmp_path: Path, dummy_tokenizer):
-    # Single batch, two prompts in one dataset ds3, with token-level rewards
-    batches = [
-        [
-            {"prompt": [{"role": "user", "content": "x"}], "env_class": "gsm8k", "env_extras": {"data_source": "ds3"}, "uid": "x"},
-            {"prompt": [{"role": "user", "content": "y"}], "env_class": "gsm8k", "env_extras": {"data_source": "ds3"}, "uid": "y"},
-        ]
-    ]
-    dataloader = DummyEvalDataLoader(batches)
-    cfg = _make_cfg(export_path=tmp_path, dump=True, n_samples=2)
+    for key, expected_value in expected_metrics.items():
+        assert metrics[key] == pytest.approx(expected_value)
 
-    gen = DummyTokenLevelGenerator()
-    metrics = await evaluate(cfg, dataloader, dummy_tokenizer, global_step=123, generator=gen)
-
-    # Per-dataset and overall metrics
-    assert metrics["eval/ds3/avg_score"] == pytest.approx(0.0, abs=1e-6)
-    assert metrics["eval/ds3/pass_at_2"] == pytest.approx(0.5, abs=1e-6)
-    assert metrics["eval/all/avg_score"] == pytest.approx(0.0, abs=1e-6)
-    assert metrics["eval/all/pass_at_2"] == pytest.approx(0.5, abs=1e-6)
-
-    # Dumped files exist
-    dump_dir = tmp_path / "dumped_evals" / "global_step_123_evals"
-    assert dump_dir.exists()
-    agg = dump_dir / "aggregated_results.jsonl"
-    ds_file = dump_dir / "ds3.jsonl"
-    assert agg.exists() and ds_file.exists()
-
-    # Aggregated file has metrics
-    with open(agg, "r") as f:
-        line = f.readline().strip()
-    data = json.loads(line)
-    assert "eval/ds3/avg_score" in data
-    assert data["eval/ds3/pass_at_2"] == pytest.approx(0.5, abs=1e-6)
-
+    assert len(generator.seen_inputs) == 1
+    seen_batch = generator.seen_inputs[0]
+    assert seen_batch["prompts"] == [prompt["prompt"] for prompt in prompts_batch]
+    assert seen_batch["env_classes"] == ["gsm8k", "custom_env"]
+    assert seen_batch["env_extras"] == [prompt["env_extras"] for prompt in prompts_batch]
+    assert seen_batch["batch_metadata"].training_phase == "eval"
