@@ -188,20 +188,16 @@ def prepare_generator_input(
         Tuple[GeneratorInput, List[str]]: generator input and list of uuids
     """
 
-    all_prompts = sum([[prompt["prompt"]] * n_samples_per_prompt for prompt in prompts], [])
-    all_envs = sum(
-        [
-            [prompt["env_class"] if prompt["env_class"] is not None else default_env_class] * n_samples_per_prompt
-            for prompt in prompts
-        ],
-        [],
-    )
+    all_prompts = [prompt["prompt"] for prompt in prompts for _ in range(n_samples_per_prompt)]
+
+    all_envs = [
+        prompt["env_class"] if prompt["env_class"] is not None else default_env_class
+        for prompt in prompts
+        for _ in range(n_samples_per_prompt)
+    ]
 
     # all the other columns are env_extras
-    env_extras = sum(
-        [[prompt["env_extras"]] * n_samples_per_prompt for prompt in prompts],
-        [],
-    )
+    env_extras = [prompt["env_extras"] for prompt in prompts for _ in range(n_samples_per_prompt)]
 
     # Create TrajectoryID objects - one UID per row, repetition_id for multiple samples
     trajectory_ids = []
