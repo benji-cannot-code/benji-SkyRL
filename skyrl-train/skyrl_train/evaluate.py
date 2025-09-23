@@ -28,7 +28,7 @@ from transformers import AutoTokenizer
 
 
 @torch.no_grad()
-async def evaluation(
+async def evaluate(
     cfg: DictConfig,
     eval_dataloader: StatefulDataLoader | None,
     tokenizer: AutoTokenizer,

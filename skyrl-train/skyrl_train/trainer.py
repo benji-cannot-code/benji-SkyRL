@@ -55,7 +55,7 @@ from skyrl_train.utils.trainer_utils import (
     build_dataloader,
 )
 from skyrl_train.utils.utils import configure_ray_worker_logging
-from skyrl_train.eval import evaluation
+from skyrl_train.evaluate import evaluate
 
 
 class RayPPOTrainer:
@@ -117,7 +117,7 @@ class RayPPOTrainer:
         Returns:
             A dictionary of evaluation metrics.
         """
-        eval_metrics = await evaluation(
+        eval_metrics = await evaluate(
             cfg=self.cfg,
             eval_dataloader=self.eval_dataloader,
             tokenizer=self.tokenizer,
