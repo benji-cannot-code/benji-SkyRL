@@ -1,11 +1,9 @@
 # utility functions used for CPU tests
 
-import pytest
 from omegaconf import OmegaConf
 
 
-@pytest.fixture
-def dummy_config():
+def example_dummy_config():
     return OmegaConf.create(
         {
             "trainer": {

@@ -1,3 +1,7 @@
+"""
+uv run --isolated --extra dev pytest tests/cpu/test_eval.py
+"""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -5,7 +9,12 @@ from omegaconf import OmegaConf
 
 from skyrl_train.evaluate import evaluate
 from skyrl_train.generators.base import GeneratorInterface, GeneratorOutput
-from tests.cpu.util_functions import dummy_config  # noqa: F401
+from tests.cpu.util_functions import example_dummy_config
+
+
+@pytest.fixture
+def dummy_config():
+    return example_dummy_config()
 
 
 class DummyStatefulDataLoader:

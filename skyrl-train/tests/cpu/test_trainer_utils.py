@@ -26,9 +26,14 @@ import re
 
 from unittest.mock import Mock, patch, mock_open
 import json
-from tests.cpu.util_functions import dummy_config  # noqa: F401
+from tests.cpu.util_functions import example_dummy_config
 
 BasicType = Union[int, float, str, bool, type(None)]
+
+
+@pytest.fixture
+def dummy_config():
+    return example_dummy_config()
 
 
 def test_run_on_node_local_rank_0():
