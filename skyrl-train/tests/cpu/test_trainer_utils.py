@@ -26,7 +26,7 @@ import re
 
 from unittest.mock import Mock, patch, mock_open
 import json
-from tests.cpu.util_functions import example_dummy_config
+from tests.cpu.util import example_dummy_config
 
 BasicType = Union[int, float, str, bool, type(None)]
 
