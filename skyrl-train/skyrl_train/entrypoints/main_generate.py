@@ -49,12 +49,8 @@ class EvalOnlyEntrypoint(BasePPOExp):
             tokenizer=self.tokenizer,
         )
 
-        # Export to wandb if configured
-        logger_cfg = self.cfg.trainer.logger
-        uses_wandb = logger_cfg == "wandb" if isinstance(logger_cfg, str) else "wandb" in logger_cfg
-        if uses_wandb:
-            tracker = self.get_tracker()
-            tracker.log(results, step=0)
+        tracker = self.get_tracker()
+        tracker.log(results, step=0, commit=True)
 
         return results
 
