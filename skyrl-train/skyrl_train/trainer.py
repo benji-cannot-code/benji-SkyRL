@@ -118,11 +118,11 @@ class RayPPOTrainer:
             A dictionary of evaluation metrics.
         """
         eval_metrics = await evaluate(
-            cfg=self.cfg,
             eval_dataloader=self.eval_dataloader,
-            tokenizer=self.tokenizer,
-            global_step=self.global_step,
             generator=self.generator,
+            cfg=self.cfg,
+            global_step=self.global_step,
+            tokenizer=self.tokenizer,
         )
         return eval_metrics
 

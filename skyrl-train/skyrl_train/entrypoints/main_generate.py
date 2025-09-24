@@ -42,11 +42,11 @@ class EvalOnlyEntrypoint(BasePPOExp):
         generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
         results: dict[str, Any] = await evaluate(
-            cfg=self.cfg,
             eval_dataloader=build_dataloader(self.cfg, self.eval_dataset, is_train=False),
-            tokenizer=self.tokenizer,
-            global_step=None,
             generator=generator,
+            cfg=self.cfg,
+            global_step=None,
+            tokenizer=self.tokenizer,
         )
 
         # Export to wandb if configured

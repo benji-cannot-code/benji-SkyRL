@@ -177,8 +177,8 @@ def prepare_generator_input(
     """Prepares the generator input for training and eval
 
     Args:
-        n_samples_per_prompt (int): how many samples to create per prompt
         prompts (List[Any]): list of prompts
+        n_samples_per_prompt (int): how many samples to create per prompt
         sampling_params (Dict[str, Any]): sampling parameters
         default_env_class (str): env class to use if env class missing from prompts
         training_phase (TrainingPhase): training or eval

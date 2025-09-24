@@ -29,21 +29,21 @@ from transformers import AutoTokenizer
 
 @torch.no_grad()
 async def evaluate(
-    cfg: DictConfig,
-    eval_dataloader: StatefulDataLoader | None,
-    tokenizer: AutoTokenizer,
-    global_step: int | None,
+    eval_dataloader: StatefulDataLoader,
     generator: GeneratorInterface,
+    cfg: DictConfig,
+    global_step: int | None,
+    tokenizer: AutoTokenizer,
 ) -> Dict[str, float]:
     """Runs generation and evaluation of trajectories.
 
     Args:
-        cfg (DictConfig): config
-        eval_dataloader (StatefulDataLoader | None): dataloader of the eval dataset
-        tokenizer (AutoTokenizer): tokenizer to use
-        global_step (int | None): current global step,
-            None if this is ran without a training context (eg eval-only)
+        eval_dataloader (StatefulDataLoader): dataloader of the eval dataset
         generator (GeneratorInterface): generator to use
+        cfg (DictConfig): config
+        global_step (int | None): current global step, or
+            `None` to indicate a non-training context (e.g., eval-only)
+        tokenizer (AutoTokenizer): tokenizer to use
 
     Returns:
         Dict[str, float]: evaluation metrics
