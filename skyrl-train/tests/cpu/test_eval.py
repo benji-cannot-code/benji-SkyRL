@@ -87,7 +87,13 @@ async def test_evaluate_computes_expected_metrics(dummy_config, tmp_path):
     tokenizer = MagicMock()
     tokenizer.decode.side_effect = lambda tokens: "decoded"
 
-    metrics = await evaluate(eval_dataloader=eval_dataloader, generator=generator, cfg=cfg, global_step=5, tokenizer=tokenizer)
+    metrics = await evaluate(
+        eval_dataloader=eval_dataloader,
+        generator=generator,
+        cfg=cfg,
+        global_step=5,
+        tokenizer=tokenizer
+    )
 
     expected_metrics = {
         "eval/dataset_a/avg_score": 1.0,
