@@ -92,7 +92,7 @@ async def test_evaluate_computes_expected_metrics(dummy_config, tmp_path):
         generator=generator,
         cfg=cfg,
         global_step=5,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
     )
 
     expected_metrics = {
