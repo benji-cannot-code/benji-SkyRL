@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 from skyrl_train.evaluate import evaluate
 from skyrl_train.generators.base import GeneratorInterface, GeneratorOutput
-from tests.cpu.util_functions import example_dummy_config
+from tests.cpu.util import example_dummy_config
 
 
 @pytest.fixture
