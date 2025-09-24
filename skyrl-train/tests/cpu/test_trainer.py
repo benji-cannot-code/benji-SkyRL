@@ -17,7 +17,7 @@ import numpy as np
 from skyrl_train.workers.worker import PolicyWorkerBase, CriticWorkerBase
 from skyrl_train.workers.worker_utils import BatchIterator
 from skyrl_train.utils.utils import validate_batch_sizes
-from tests.cpu.util_functions import example_dummy_config
+from tests.cpu.util import example_dummy_config
 
 
 @pytest.fixture
