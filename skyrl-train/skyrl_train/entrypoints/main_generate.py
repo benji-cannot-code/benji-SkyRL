@@ -65,9 +65,28 @@ def eval_entrypoint(cfg: DictConfig) -> dict:
 def main(cfg: DictConfig) -> None:
     validate_generator_cfg(cfg)
     initialize_ray(cfg)
+    import time
+    s = time.time()
     metrics = ray.get(eval_entrypoint.remote(cfg))
+    print(f"Generation took: {time.time() - s} seconds")
     logger.info(f"Metrics from eval only run: {metrics}")
 
 
 if __name__ == "__main__":
     main()
+
+
+"""
+
+1 A100 gsm8k:
+                    e2e         inference
+local engine        164         138.92
+local engine        169         138.42
+
+
+1 A100 gsm8k:
+                    e2e         inference
+local engine        123
+server
+
+"""
