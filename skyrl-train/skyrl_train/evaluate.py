@@ -2,6 +2,8 @@ import torch
 from tqdm import tqdm
 from typing import Dict, List, Any
 from pathlib import Path
+import json
+from datetime import datetime
 from loguru import logger
 
 from skyrl_train.utils import Timer
@@ -56,7 +58,9 @@ async def evaluate(
     concat_uids: List[str] = []
     sampling_params = cfg.generator.eval_sampling_params
     pbar = tqdm(total=len(eval_dataloader), initial=0, desc="Evaluation Progress")
-    for _, prompts in enumerate(eval_dataloader):
+    reports_dir = Path("/workspace/inference_reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    for batch_idx, prompts in enumerate(eval_dataloader):
         pbar.update(1)
         generator_input, uids = prepare_generator_input(
             prompts,
@@ -71,6 +75,28 @@ async def evaluate(
         s = time.time()
         generator_output: GeneratorOutput = await generator.generate(generator_input)
         print(f"inference time inside eval: {time.time() - s}")
+        # Dump raw generator output to /workspace/inference_reports with timestamped filename
+        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+        base_name = f"{timestamp}.json"
+        out_path = reports_dir / base_name
+        suffix = 1
+        while out_path.exists():
+            out_path = reports_dir / f"{timestamp}_{suffix}.json"
+            suffix += 1
+        try:
+            with out_path.open("w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "phase": "eval",
+                        "batch_index": batch_idx,
+                        "output": generator_output,
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+            logger.info(f"Wrote inference report to {out_path}")
+        except Exception as e:
+            logger.error(f"Failed to write inference report to {out_path}: {e}")
         validate_generator_output(generator_input, generator_output)
         generator_outputs.append(generator_output)
         concat_all_envs.extend(generator_input["env_classes"])
