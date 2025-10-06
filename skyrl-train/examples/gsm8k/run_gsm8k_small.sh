@@ -1,14 +1,4 @@
-set -x
-
-# Colocated GRPO training+generation for Qwen2.5-1.5B-Instruct on GSM8K.
-
-# uv run examples/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
-# export WANDB_API_KEY=<your_key_here>
-# bash examples/gsm8k/run_gsm8k.sh
-
-# NOTE (sumanthrh): `micro_train_batch_size_per_gpu` and `micro_forward_batch_size_per_gpu` can be tuned
-
-DATA_DIR="$HOME/data/gsm8k"
+DATA_DIR="$HOME/data/gsm8k_10"
 NUM_GPUS=1
 LOGGER="wandb"  # change to "console" to print to stdout
 
@@ -29,13 +19,13 @@ uv run --isolated --extra $INFERENCE_BACKEND -m skyrl_train.entrypoints.main_bas
   trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
   generator.num_inference_engines=$NUM_GPUS \
   generator.inference_engine_tensor_parallel_size=1 \
-  trainer.epochs=20 \
-  trainer.eval_batch_size=1024 \
+  trainer.epochs=1 \
+  trainer.eval_batch_size=128 \
   trainer.eval_before_train=true \
   trainer.eval_interval=5 \
   trainer.update_epochs_per_batch=1 \
-  trainer.train_batch_size=1024 \
-  trainer.policy_mini_batch_size=256 \
+  trainer.train_batch_size=128 \
+  trainer.policy_mini_batch_size=32 \
   trainer.micro_forward_batch_size_per_gpu=64 \
   trainer.micro_train_batch_size_per_gpu=64 \
   trainer.ckpt_interval=10 \

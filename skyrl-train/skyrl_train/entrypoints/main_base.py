@@ -23,6 +23,7 @@ import hydra
 from loguru import logger
 from skyrl_train.utils.tracking import Tracking
 import multiprocessing as mp
+import time
 
 # NOTE (sumanthrh): We use ray heavily and thus disable `fork` start method.
 # forking within ray leads to undefined behaviour and often causes hard to debug
@@ -274,7 +275,11 @@ class BasePPOExp:
     def run(self):
         trainer = self._setup_trainer()
         # Start the training loop
+        _train_start_ts = time.time()
         trainer.train()
+        _train_end_ts = time.time()
+        _train_elapsed_s = int(_train_end_ts - _train_start_ts)
+        logger.info(f"[SkyRL] training_elapsed_seconds={_train_elapsed_s}")
 
 
 @ray.remote(num_cpus=1)
