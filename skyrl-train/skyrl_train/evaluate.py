@@ -66,7 +66,11 @@ async def evaluate(
             "eval",
             global_step,
         )
+        import time
+
+        s = time.time()
         generator_output: GeneratorOutput = await generator.generate(generator_input)
+        print(f"inference time inside eval: {time.time() - s}")
         validate_generator_output(generator_input, generator_output)
         generator_outputs.append(generator_output)
         concat_all_envs.extend(generator_input["env_classes"])

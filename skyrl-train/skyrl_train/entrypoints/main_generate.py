@@ -3,6 +3,7 @@ Main entrypoint for evaluation-only.
 """
 
 import asyncio
+import time
 
 import hydra
 import ray
@@ -32,15 +33,26 @@ class EvalOnlyEntrypoint(BasePPOExp):
 
         tokenizer = self.tokenizer
 
+        s = time.time()
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
             inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
+        print(f"create inf engine time: {time.time() - s}")
 
+        s = time.time()
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
-        await inference_engine_client.wake_up()
-        generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
+        print(f"create inf client time: {time.time() - s}")
 
+        s = time.time()
+        await inference_engine_client.wake_up()
+        print(f"inf engine wake up time: {time.time() - s}")
+
+        s = time.time()
+        generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
+        print(f"create generator time: {time.time() - s}")
+
+        eval_start = time.time()
         results: dict[str, Any] = await evaluate(
             eval_dataloader=build_dataloader(self.cfg, self.eval_dataset, is_train=False),
             generator=generator,
@@ -48,6 +60,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
             global_step=None,
             tokenizer=self.tokenizer,
         )
+        print(f"actual inference: {time.time() - eval_start}")
 
         tracker = self.get_tracker()
         tracker.log(results, step=0, commit=True)
@@ -65,10 +78,7 @@ def eval_entrypoint(cfg: DictConfig) -> dict:
 def main(cfg: DictConfig) -> None:
     validate_generator_cfg(cfg)
     initialize_ray(cfg)
-    import time
-    s = time.time()
     metrics = ray.get(eval_entrypoint.remote(cfg))
-    print(f"Generation took: {time.time() - s} seconds")
     logger.info(f"Metrics from eval only run: {metrics}")
 
 
@@ -78,15 +88,19 @@ if __name__ == "__main__":
 
 """
 
-1 A100 gsm8k:
-                    e2e         inference
-local engine        164         138.92
-local engine        169         138.42
+
+1 A100 gsm8k vllm:
+                            local engine                server
+e2e                         149                         88
+inference                   43.68907284736633           48.253
+inf time in eval            13.193318128585815          17.809234380722046
+inf time in eval 2          5.665455341339111           4.998567581176758
+inf engine creation         6.692424535751343           0.00018310546875
+inf engine client           0.0002460479736328125       0.00016236305236816406
+inf engine wakeup           57.64691233634949           0.004301548004150391
+create generator            0.01616978645324707         0.012064456939697266
 
 
-1 A100 gsm8k:
-                    e2e         inference
-local engine        123
-server
+
 
 """
