@@ -601,25 +601,8 @@ def initialize_ray(cfg: DictConfig):
 
     env_vars = prepare_runtime_environment(cfg)
 
-    def _infer_repo_root() -> str:
-        print("Infering repo root")
-        # First check if we have an explicit SKYRL_REPO_ROOT set (e.g., in Modal container)
-        if os.environ.get("SKYRL_REPO_ROOT"):
-            return os.environ["SKYRL_REPO_ROOT"]
-
-        # Walk up from this file to find a directory that contains both skyrl-train and skyrl-gym
-        start = Path(__file__).resolve()
-        for base in [start] + list(start.parents):
-            if (base / "skyrl-train").exists() and (base / "skyrl-gym").exists():
-                return str(base)
-        # Fallback: try the parent of the skyrl-train directory if present
-        try:
-            return str(start.parents[4])  # <repo_root>/skyrl-train/skyrl_train/utils/utils.py
-        except Exception:
-            return str(start.parent.parent)  # best-effort fallback
-
     # Ensure Ray packages skyrl-train as working_dir, and include skyrl-gym as a py_module
-    repo_root = os.getenv("SKYRL_REPO_ROOT") or _infer_repo_root()
+    repo_root = os.getenv("SKYRL_REPO_ROOT")
     working_dir = os.path.join(repo_root, "skyrl-train")
     gym_dir = os.path.join(repo_root, "skyrl-gym")
     ray.init(
