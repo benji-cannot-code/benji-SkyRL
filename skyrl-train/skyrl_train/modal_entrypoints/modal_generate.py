@@ -32,12 +32,11 @@ image = (
 
 data_volume = modal.Volume.from_name("skyrl-data", create_if_missing=True)
 
-
 @app.function(
     image=image,
-    gpu="L4:1",
+    gpu="L4:2",
     volumes={"/root/data": data_volume},
-    timeout=60 * 60, # 1 hour
+    timeout=3600, # 1 hour
 )
 def run_script(command: str):
     """
@@ -73,7 +72,6 @@ def run_script(command: str):
         else:
             print("Warning: ../skyrl-gym not found; uv editable path may fail")
 
-    # Ensure Ray points to a local head inside this container
     for var in ["RAY_ADDRESS", "RAY_HEAD_NODE", "RAY_GCS_ADDRESS"]:
         os.environ.pop(var, None)
     try:
@@ -92,6 +90,12 @@ def run_script(command: str):
             check=True,
         )
     os.environ["RAY_ADDRESS"] = "127.0.0.1:6379"
+
+    # Create symlink so /home/ray/data points to /root/data (where volume is mounted)
+    os.makedirs("/home/ray", exist_ok=True)
+    if not os.path.exists("/home/ray/data"):
+        os.symlink("/root/data", "/home/ray/data")
+        print("Created symlink: /home/ray/data -> /root/data")
 
     print(f"Running command: {command}")
     print(f"Working directory: {os.getcwd()}")
@@ -124,11 +128,9 @@ def run_script(command: str):
 @app.local_entrypoint()
 def main(command: str = "nvidia-smi"):
     """
-    Local entrypoint - runs on your Mac and calls the remote function.
-    Usage: modal run main/run.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
+    Usage: modal run integrations/modal/run_command.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
     """
     print(f"Submitting command to Modal: {command}")
     result = run_script.remote(command)
     print("\n=== Command completed successfully ===")
     return result
-
