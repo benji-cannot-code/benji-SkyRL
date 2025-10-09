@@ -8,7 +8,7 @@ set -x
 
 DATA_DIR="$HOME/data/gsm8k"
 NUM_GPUS=1
-LOGGER="wandb"  # change to "console" to print to stdout
+LOGGER="console"  # change to "console" to print to stdout
 
 INFERENCE_BACKEND="vllm"  # or "sglang"
 
