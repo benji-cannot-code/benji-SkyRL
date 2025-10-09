@@ -35,7 +35,7 @@ data_volume = modal.Volume.from_name("skyrl-data", create_if_missing=True)
 
 @app.function(
     image=image,
-    gpu="A100:1",
+    gpu="L4:1",
     volumes={"/root/data": data_volume},
     timeout=60 * 60, # 1 hour
 )
@@ -73,18 +73,6 @@ def run_script(command: str):
         else:
             print("Warning: ../skyrl-gym not found; uv editable path may fail")
 
-    # Rewrite pyproject to reference ./skyrl-gym (relative to working_dir)
-    try:
-        pyproject_path = os.path.join(os.getcwd(), "pyproject.toml")
-        with open(pyproject_path, "r", encoding="utf-8") as f:
-            py_text = f.read()
-        new_text = py_text.replace('path = "../skyrl-gym"', 'path = "./skyrl-gym"')
-        if new_text != py_text:
-            with open(pyproject_path, "w", encoding="utf-8") as f:
-                f.write(new_text)
-            print("Updated pyproject.toml to use ./skyrl-gym for uv sources")
-    except Exception as e:
-        print(f"Warning: failed to rewrite pyproject.toml for uv sources: {e}")
     # Ensure Ray points to a local head inside this container
     for var in ["RAY_ADDRESS", "RAY_HEAD_NODE", "RAY_GCS_ADDRESS"]:
         os.environ.pop(var, None)
