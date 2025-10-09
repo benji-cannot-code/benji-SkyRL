@@ -6,7 +6,7 @@ set -x
 # export WANDB_API_KEY=<your_key_here>
 # bash examples/gsm8k/run_generation_gsm8k.sh
 
-DATA_DIR="$HOME/data/gsm8k"
+DATA_DIR="/root/data/gsm8k"
 NUM_GPUS=1
 LOGGER="console"  # change to "console" to print to stdout
 
