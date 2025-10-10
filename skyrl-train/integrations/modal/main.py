@@ -80,7 +80,7 @@ volume = create_modal_volume()
 
 @app.function(
     image=image,
-    gpu="L4:1",
+    gpu="A100:1",
     volumes=volume,
     timeout=3600,  # 1 hour
 )
@@ -118,12 +118,29 @@ def run_script(command: str, skyrl_path: str):
         else:
             raise Exception("Cannot find skyrl-gym source")
 
-    subprocess.run(
-        "ray start --head --disable-usage-stats --port 6379",
-        shell=True,
-        check=True,
-    )
-    os.environ["RAY_ADDRESS"] = "127.0.0.1:6379"
+    try:
+        subprocess.run(
+            "ray status",
+            shell=True,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        print("Ray cluster already running")
+        subprocess.run(
+            "ray stop",
+            shell=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        print("Initializing ray cluster in command line")
+        subprocess.run(
+            "ray start --head",
+            shell=True,
+            check=True,
+        )
+    # Use 'auto' to automatically detect the Ray cluster instead of hardcoded IP
+    os.environ["RAY_ADDRESS"] = "auto"
 
     # Create symlink so /home/ray/data points to /root/data (where volume is mounted)
     os.makedirs("/home/ray", exist_ok=True)
