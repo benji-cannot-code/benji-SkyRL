@@ -15,7 +15,6 @@ def _find_local_repo_root() -> Path:
     candidates = [Path(__file__).resolve(), Path.cwd()]
     for start in candidates:
         for base in [start] + list(start.parents):
-            print(base)
             if (base / "skyrl-train").exists() and (base / "skyrl-gym").exists():
                 return base
     print("Warning: returning cwd as fall back")
@@ -117,23 +116,11 @@ def run_script(command: str, skyrl_path: str):
         else:
             raise Exception("Cannot find skyrl-gym source")
 
-    for var in ["RAY_ADDRESS", "RAY_HEAD_NODE", "RAY_GCS_ADDRESS"]:
-        os.environ.pop(var, None)
-    try:
-        subprocess.run(
-            "ray status --address 127.0.0.1:6379",
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except subprocess.CalledProcessError:
-        print("Initializing ray cluster in command line")
-        subprocess.run(
-            "ray start --head --disable-usage-stats --port 6379",
-            shell=True,
-            check=True,
-        )
+    subprocess.run(
+        "ray start --head --disable-usage-stats --port 6379",
+        shell=True,
+        check=True,
+    )
     os.environ["RAY_ADDRESS"] = "127.0.0.1:6379"
 
     # Create symlink so /home/ray/data points to /root/data (where volume is mounted)
@@ -178,8 +165,9 @@ def main(command: str = "nvidia-smi", path_in_skyrl: str = "skyrl-train"):
         path_in_skyrl (str, optional): Directory in which to run the command.
             This must be a valid directory within your local SkyRL repo. Defaults to "skyrl-train".
 
-    Returns:
-        _type_: _description_
+    Examples:
+        modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
+        MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
     """
     print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
     print(f"{'=' * 5} Running inside: {path_in_skyrl} {'=' * 5}")
