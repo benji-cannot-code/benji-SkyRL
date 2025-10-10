@@ -1,51 +1,89 @@
 import modal
+import os
 from pathlib import Path
 
-app = modal.App("benji-skyrl-app")
 
+def _find_local_repo_root() -> Path:
+    """Computes full path of local SkyRL repo robustly
 
-# Compute the SkyRL repo root robustly (works when this file is mounted standalone)
-def _find_repo_root() -> Path:
+    Raises:
+        Exception: if cannot find local SkyRL repo
+
+    Returns:
+        Path: path object describing full path of local SkyRL repo
+    """
     candidates = [Path(__file__).resolve(), Path.cwd()]
     for start in candidates:
         for base in [start] + list(start.parents):
+            print(base)
             if (base / "skyrl-train").exists() and (base / "skyrl-gym").exists():
                 return base
-    # Fallback: if not found, return current working directory
+    print("Warning: returning cwd as fall back")
     return Path.cwd()
 
 
-repo_path = _find_repo_root()
-print(f"Root path: {repo_path}")
+def create_modal_image() -> modal.Image:
+    """Creates a Modal image for Modal container. This uses the SkyRL container as
+    a base image. It also mounts the local SkyRL repo to the container
 
-# This syncs your local code to /root/SkyRL in the container
-image = (
-    modal.Image.from_registry("novaskyai/skyrl-train-ray-2.48.0-py3.12-cu12.8")
-    .env(
-        {
-            "SKYRL_REPO_ROOT": "/root/SkyRL",
-            "SKYRL_USING_MODAL": "true",
-        }
+    Returns:
+        modal.Image: container image
+    """
+
+    local_repo_path = _find_local_repo_root()
+    print(f"Root path: {local_repo_path}")
+
+    return (
+        modal.Image.from_registry("novaskyai/skyrl-train-ray-2.48.0-py3.12-cu12.8")
+        .env(
+            {
+                "SKYRL_REPO_ROOT": "/root/SkyRL",  # where to put SkyRL in container
+                "SKYRL_USING_MODAL": "true",
+            }
+        )
+        .add_local_dir(
+            local_path=str(local_repo_path),
+            remote_path="/root/SkyRL",
+            ignore=[
+                ".venv",
+                "*.pyc",
+                "__pycache__",
+                ".git",
+                "*.egg-info",
+                ".pytest_cache",
+                "node_modules",
+                ".DS_Store",
+            ],
+        )
     )
-    .add_local_dir(
-        local_path=str(repo_path),
-        remote_path="/root/SkyRL",
-        ignore=[".venv", "*.pyc", "__pycache__", ".git", "*.egg-info", ".pytest_cache", "node_modules", ".DS_Store"],
-    )
-)
 
-# Create external volume for datasets
 
-data_volume = modal.Volume.from_name("skyrl-data", create_if_missing=True)
+def create_modal_volume(volume_name: str = "skyrl-data") -> dict[str, modal.Volume]:
+    """Creates volume to attach to container.
+
+    Args:
+        volume_name (str, optional): Name of volume. Creates a new
+        volume if given name does not exist. Defaults to "skyrl-data".
+
+    Returns:
+        dict[str, modal.Volume]: location in container to attach the volume & volume itself
+    """
+    data_volume = modal.Volume.from_name(volume_name, create_if_missing=True)
+    return {"/root/data": data_volume}  # mounts volume at /root/data inside container
+
+
+app = modal.App(os.getenv("MODAL_APP_NAME", "my_skyrl_app"))
+image = create_modal_image()
+volume = create_modal_volume()
 
 
 @app.function(
     image=image,
     gpu="L4:1",
-    volumes={"/root/data": data_volume},
+    volumes=volume,
     timeout=3600,  # 1 hour
 )
-def run_script(command: str):
+def run_script(command: str, skyrl_path: str):
     """
     Run any command from the SkyRL repo.
     Example: run_script.remote("uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k")
@@ -61,8 +99,8 @@ def run_script(command: str):
     print(f"Initial working directory: {os.getcwd()}")
 
     # Change to the skyrl-train directory
-    skyrl_train_dir = os.path.join(repo_root, "skyrl-train")
-    os.chdir(skyrl_train_dir)
+    run_command_dir = os.path.join(repo_root, skyrl_path.lstrip("/"))
+    os.chdir(run_command_dir)
     print(f"Changed to directory: {os.getcwd()}")
 
     # Ensure skyrl-gym exists inside working_dir so uv can resolve editable path
@@ -77,7 +115,7 @@ def run_script(command: str):
                 check=True,
             )
         else:
-            print("Warning: ../skyrl-gym not found; uv editable path may fail")
+            raise Exception("Cannot find skyrl-gym source")
 
     for var in ["RAY_ADDRESS", "RAY_HEAD_NODE", "RAY_GCS_ADDRESS"]:
         os.environ.pop(var, None)
@@ -132,11 +170,18 @@ def run_script(command: str):
 
 
 @app.local_entrypoint()
-def main(command: str = "nvidia-smi", modal_app_name: str = "my_app_name"):
+def main(command: str = "nvidia-smi", path_in_skyrl: str = "skyrl-train"):
+    """Main entry-point for running a command in Modal-integrated SkyRL environmenmt
+
+    Args:
+        command (str, optional): Command to run. Defaults to "nvidia-smi".
+        path_in_skyrl (str, optional): Directory in which to run the command.
+            This must be a valid directory within your local SkyRL repo. Defaults to "skyrl-train".
+
+    Returns:
+        _type_: _description_
     """
-    Usage: modal run integrations/modal/run_command.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
-    """
-    print(f"Submitting command to Modal: {command}")
-    result = run_script.remote(command)
-    print("\n=== Command completed successfully ===")
-    return result
+    print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
+    print(f"{'=' * 5} Running inside: {path_in_skyrl} {'=' * 5}")
+    run_script.remote(command, path_in_skyrl)
+    print(f"\n{'=' * 5} Command completed successfully {'=' * 5}")
