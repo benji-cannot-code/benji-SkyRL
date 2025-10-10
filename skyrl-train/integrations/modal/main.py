@@ -32,14 +32,16 @@ def create_modal_image() -> modal.Image:
     local_repo_path = _find_local_repo_root()
     print(f"Root path: {local_repo_path}")
 
+    envs = {
+        "SKYRL_REPO_ROOT": "/root/SkyRL",  # where to put SkyRL in container
+        "SKYRL_USING_MODAL": "true",
+    }
+    if os.getenv("WANDB_API_KEY", False):
+        envs["WANDB_API_KEY"] = os.getenv("WANDB_API_KEY")
+
     return (
         modal.Image.from_registry("novaskyai/skyrl-train-ray-2.48.0-py3.12-cu12.8")
-        .env(
-            {
-                "SKYRL_REPO_ROOT": "/root/SkyRL",  # where to put SkyRL in container
-                "SKYRL_USING_MODAL": "true",
-            }
-        )
+        .env(envs)
         .add_local_dir(
             local_path=str(local_repo_path),
             remote_path="/root/SkyRL",
@@ -167,7 +169,7 @@ def main(command: str = "nvidia-smi", path_in_skyrl: str = "skyrl-train"):
 
     Examples:
         modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
-        MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+        MODAL_APP_NAME=benji_skyrl_app WANDB_API_KEY=... modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
     """
     print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
     print(f"{'=' * 5} Running inside: {path_in_skyrl} {'=' * 5}")

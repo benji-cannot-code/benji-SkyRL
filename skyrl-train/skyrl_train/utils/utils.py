@@ -14,7 +14,6 @@ from ray.util.placement_group import (
     PlacementGroup,
     placement_group_table,
 )
-from pathlib import Path
 
 from .constants import SKYRL_LD_LIBRARY_PATH_EXPORT, SKYRL_RAY_PG_TIMEOUT_IN_S, SKYRL_PYTHONPATH_EXPORT
 
@@ -598,6 +597,7 @@ def initialize_ray(cfg: DictConfig):
     from .ppo_utils import (
         sync_registries,
     )
+
     env_vars = prepare_runtime_environment(cfg)
 
     using_modal = os.environ.get("SKYRL_USING_MODAL", None) is not None
