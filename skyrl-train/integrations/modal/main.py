@@ -34,7 +34,6 @@ def create_modal_image() -> modal.Image:
 
     envs = {
         "SKYRL_REPO_ROOT": "/root/SkyRL",  # where to put SkyRL in container
-        "SKYRL_USING_MODAL": "true",
     }
     if os.getenv("WANDB_API_KEY", False):
         envs["WANDB_API_KEY"] = os.getenv("WANDB_API_KEY")
