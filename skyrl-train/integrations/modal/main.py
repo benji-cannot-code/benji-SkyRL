@@ -80,7 +80,7 @@ volume = create_modal_volume()
 
 @app.function(
     image=image,
-    gpu="A100:1",
+    gpu="L4:1",
     volumes=volume,
     timeout=3600,  # 1 hour
 )
@@ -118,33 +118,23 @@ def run_script(command: str, skyrl_path: str):
         else:
             raise Exception("Cannot find skyrl-gym source")
 
-    try:
-        subprocess.run(
-            "ray status",
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        print("Ray cluster already running")
-        subprocess.run(
-            "ray stop",
-            shell=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        print("Initializing ray cluster in command line")
-        subprocess.run(
-            "ray start --head",
-            shell=True,
-            check=True,
-        )
+    print("Initializing ray cluster in command line")
+    subprocess.run(
+        "ray start --head",
+        shell=True,
+        check=True,
+    )
     # Use 'auto' to automatically detect the Ray cluster instead of hardcoded IP
     os.environ["RAY_ADDRESS"] = "auto"
 
     # Create symlink so /home/ray/data points to /root/data (where volume is mounted)
+    print("\n=== Setting up data directory symlink ===")
     os.makedirs("/home/ray", exist_ok=True)
-    if not os.path.exists("/home/ray/data"):
+    if os.path.islink("/home/ray/data"):
+        print("Symlink /home/ray/data already exists")
+    elif os.path.exists("/home/ray/data"):
+        print("Warning: /home/ray/data exists but is not a symlink")
+    else:
         os.symlink("/root/data", "/home/ray/data")
         print("Created symlink: /home/ray/data -> /root/data")
 
