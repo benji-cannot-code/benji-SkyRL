@@ -598,20 +598,23 @@ def initialize_ray(cfg: DictConfig):
     from .ppo_utils import (
         sync_registries,
     )
-
     env_vars = prepare_runtime_environment(cfg)
 
-    # Ensure Ray packages skyrl-train as working_dir, and include skyrl-gym as a py_module
-    repo_root = os.getenv("SKYRL_REPO_ROOT")
-    working_dir = os.path.join(repo_root, "skyrl-train")
-    gym_dir = os.path.join(repo_root, "skyrl-gym")
-    ray.init(
-        runtime_env={
-            "env_vars": env_vars,
-            "working_dir": working_dir,
-            "py_modules": [gym_dir],
-        }
-    )
+    using_modal = os.environ.get("SKYRL_USING_MODAL", None) is not None
+    if not using_modal:
+        ray.init(runtime_env={"env_vars": env_vars})
+    else:
+        logger.info("Initializing Ray with Modal")
+        repo_root = os.getenv("SKYRL_REPO_ROOT")
+        working_dir = os.path.join(repo_root, "skyrl-train")
+        gym_dir = os.path.join(repo_root, "skyrl-gym")
+        ray.init(
+            runtime_env={
+                "env_vars": env_vars,
+                "working_dir": working_dir,
+                "py_modules": [gym_dir],
+            }
+        )
 
     # create the named ray actors for the registries to make available to all workers
     sync_registries()
