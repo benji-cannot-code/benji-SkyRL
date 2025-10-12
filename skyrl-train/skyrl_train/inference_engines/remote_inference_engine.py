@@ -1,4 +1,5 @@
 import aiohttp
+import time
 from skyrl_train.inference_engines.base import (
     InferenceEngineInterface,
     InferenceEngineInput,
@@ -61,6 +62,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             )
 
         # 2. Send a batched request to the server
+        http_start = time.time()
         response = None
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as session:
             headers = {"Content-Type": "application/json"}
@@ -82,8 +84,20 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 request_url = f"{self.url}/generate"
             else:
                 raise ValueError(f"Invalid engine backend: {self.engine_backend}")
+
+            request_start = time.time()
             async with session.post(request_url, json=payload, headers=headers) as resp:
                 response = await resp.json()
+            request_end = time.time()
+        http_end = time.time()
+
+        http_total_time = http_end - http_start
+        actual_request_time = request_end - request_start
+        overhead_time = http_total_time - actual_request_time
+
+        print(f"[RemoteInferenceEngine] HTTP total time: {http_total_time:.4f}s")
+        print(f"[RemoteInferenceEngine]   - Actual request time (excludes session setup): {actual_request_time:.4f}s")
+        print(f"[RemoteInferenceEngine]   - Session overhead: {overhead_time:.4f}s")
 
         # 3. Parse outputs
         outputs = []

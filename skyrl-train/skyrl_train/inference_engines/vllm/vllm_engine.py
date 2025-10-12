@@ -5,6 +5,7 @@ from http import HTTPStatus
 import ray
 import torch
 import asyncio
+import time
 import vllm
 from types import SimpleNamespace
 from vllm import SamplingParams
@@ -34,7 +35,6 @@ from skyrl_train.inference_engines.base import (
 from skyrl_train.inference_engines.vllm.utils import pop_openai_kwargs
 from loguru import logger
 from skyrl_train.utils import str_to_torch_dtype
-import time
 
 
 @dataclass
@@ -272,6 +272,7 @@ class VLLMInferenceEngine(BaseVLLMInferenceEngine):
     async def generate(self, input_batch: InferenceEngineInput) -> InferenceEngineOutput:
         prompt_token_ids, sampling_params = self._preprocess_prompts(input_batch)
 
+        inference_start = time.time()
         # Check if LoRA is enabled and create LoRA requests
         lora_requests = None
         if self._is_lora:
@@ -290,6 +291,9 @@ class VLLMInferenceEngine(BaseVLLMInferenceEngine):
             sampling_params=sampling_params,
             lora_request=lora_requests,
         )
+        inference_end = time.time()
+
+        print(f"[VLLMInferenceEngine] Pure inference time: {inference_end - inference_start:.4f}s")
 
         return self._postprocess_outputs(outputs)
 
@@ -445,6 +449,7 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
         """Generate responses using vLLM's async engine."""
         prompt_token_ids, sampling_params = self._preprocess_prompts(input_batch)
 
+        inference_start = time.time()
         tasks = []
         for prompt in prompt_token_ids:
             # Schedule the collection of outputs for each prompt.
@@ -453,6 +458,9 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
             task = asyncio.create_task(self._collect_outputs(prompt, request_id, sampling_params))
             tasks.append(task)
         outputs = await asyncio.gather(*tasks)
+        inference_end = time.time()
+
+        print(f"[AsyncVLLMInferenceEngine] Pure inference time: {inference_end - inference_start:.4f}s")
 
         return self._postprocess_outputs(outputs)
 
