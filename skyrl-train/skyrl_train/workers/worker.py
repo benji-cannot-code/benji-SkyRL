@@ -23,7 +23,7 @@ from ray.util.placement_group import (
 
 from skyrl_train.utils import ray_noset_visible_devices, get_ray_pg_ready_with_timeout, get_reordered_bundle_indices
 from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
-from skyrl_train.utils import io
+from skyrl_train.utils.io import io
 from skyrl_train.utils.ppo_utils import masked_mean
 from skyrl_train.distributed.dispatch import MeshRank, ActorInfo, DispatchRegistry, Dispatch
 from skyrl_train.distributed.strategy import DistributedStrategy
@@ -509,26 +509,32 @@ class PPORayActorGroup:
         """
         return [actor.init_model.remote(*args, **kwargs) for actor in self._actor_handlers]
 
-    def offload_to_cpu(self, nonblocking=False):
+    def offload_to_cpu(self, nonblocking=False, offload_optimizer=True, offload_model=True):
         """Offload all worker state to CPU.
 
         Args:
             nonblocking: Whether this operation is synchronous or asynchronous.
             If `nonblocking=True`, then the function returns a list of object refs.
         """
-        refs = [actor.offload_to_cpu.remote() for actor in self._actor_handlers]
+        refs = [
+            actor.offload_to_cpu.remote(offload_optimizer=offload_optimizer, offload_model=offload_model)
+            for actor in self._actor_handlers
+        ]
         if nonblocking:
             return refs
         return ray.get(refs)
 
-    def backload_to_gpu(self, nonblocking=False):
+    def backload_to_gpu(self, nonblocking=False, backload_optimizer=True, backload_model=True):
         """Backload worker state to GPU
 
         Args:
             nonblocking: Whether this operation is synchronous or asynchronous.
             If `nonblocking=True`, then the function returns a list of ObjectRefs.
         """
-        refs = [actor.backload_to_gpu.remote() for actor in self._actor_handlers]
+        refs = [
+            actor.backload_to_gpu.remote(backload_optimizer=backload_optimizer, backload_model=backload_model)
+            for actor in self._actor_handlers
+        ]
         if nonblocking:
             return refs
         return ray.get(refs)
@@ -642,7 +648,7 @@ class PolicyWorkerBase(Worker):
         for epoch in range(self.cfg.trainer.update_epochs_per_batch):
             pbar = tqdm(
                 dataloader,
-                desc=f"Actor Train epoch [{epoch + 1}/{self.cfg.trainer.update_epochs_per_batch}]",
+                desc=f"Policy Train epoch [{epoch + 1}/{self.cfg.trainer.update_epochs_per_batch}]",
                 disable=not self.strategy.is_rank_0(),
             )
             for local_step, experience in enumerate(pbar):

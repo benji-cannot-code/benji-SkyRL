@@ -8,12 +8,14 @@ set -x
 
 # NOTE (sumanthrh): `micro_train_batch_size_per_gpu` and `micro_forward_batch_size_per_gpu` can be tuned
 
-DATA_DIR="$HOME/data/gsm8k"
-NUM_GPUS=1
-LOGGER="wandb"  # change to "console" to print to stdout
+# You can override the default values with e.g.: `NUM_GPUS=1 bash examples/gsm8k/run_gsm8k.sh`.
 
-INFERENCE_BACKEND="vllm"
-# INFERENCE_BACKEND="sglang"
+: "${DATA_DIR:="$HOME/data/gsm8k"}"
+: "${NUM_GPUS:=4}"
+: "${LOGGER:=wandb}" # change to "console" to print to stdout
+
+: "${INFERENCE_BACKEND:=vllm}"
+# : "${INFERENCE_BACKEND:=sglang}"
 
 # E2E timer start
 E2E_START_TS=$(date +%s)
