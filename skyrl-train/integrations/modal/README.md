@@ -46,8 +46,7 @@ modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
 #### 4. Run from a different directory in the repo
 ```bash
 modal run main.py \
-  --command "uv run search/run_skyrl_train_search.py" \
-  --path-in-skyrl "skyrl-train/examples"
+  --command "uv run search/run_skyrl_train_search.py" 
 ```
 
 ## Configuration
@@ -55,7 +54,6 @@ modal run main.py \
 ### Command Parameters
 
 - `--command`: The command to execute in the container (default: `"nvidia-smi"`)
-- `--path-in-skyrl`: Directory within the SkyRL repo where the command should run (default: `"skyrl-train"`)
 
 ### Environment Variables
 
@@ -64,13 +62,11 @@ Configure the integration using environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MODAL_APP_NAME` | Name of your Modal app (useful for team collaboration) | `"my_skyrl_app"` |
-| `WANDB_API_KEY` | Weights & Biases API key for experiment tracking | None |
 
 ### Example with Environment Variables
 
 ```bash
 MODAL_APP_NAME=benji_skyrl_app \
-WANDB_API_KEY=your_wandb_key_here \
 modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
 ```
 
@@ -79,7 +75,7 @@ modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
 ### 1. Image Creation
 The `create_modal_image()` function:
 - Pulls the SkyRL base Docker image
-- Sets environment variables (`SKYRL_REPO_ROOT`, `SKYRL_USING_MODAL`, `WANDB_API_KEY`)
+- Sets environment variables (`SKYRL_REPO_ROOT`)
 - Mounts your local SkyRL repository to `/root/SkyRL` in the container
 - Excludes unnecessary files (`.venv`, `.git`, `__pycache__`, etc.)
 

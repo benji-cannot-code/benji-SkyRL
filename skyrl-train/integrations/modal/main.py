@@ -12,13 +12,16 @@ def _find_local_repo_root() -> Path:
     Returns:
         Path: path object describing full path of local SkyRL repo
     """
+    # If running inside Modal container, use the environment variable
+    if "SKYRL_REPO_ROOT" in os.environ:
+        return Path(os.environ["SKYRL_REPO_ROOT"])
+
     candidates = [Path(__file__).resolve(), Path.cwd()]
     for start in candidates:
         for base in [start] + list(start.parents):
             if (base / "skyrl-train").exists() and (base / "skyrl-gym").exists():
                 return base
-    print("Warning: returning cwd as fall back")
-    return Path.cwd()
+    raise Exception("SkyRL root repo path not found")
 
 
 def create_modal_image() -> modal.Image:
@@ -35,8 +38,6 @@ def create_modal_image() -> modal.Image:
     envs = {
         "SKYRL_REPO_ROOT": "/root/SkyRL",  # where to put SkyRL in container
     }
-    if os.getenv("WANDB_API_KEY", False):
-        envs["WANDB_API_KEY"] = os.getenv("WANDB_API_KEY")
 
     return (
         modal.Image.from_registry("novaskyai/skyrl-train-ray-2.48.0-py3.12-cu12.8")
@@ -83,10 +84,9 @@ volume = create_modal_volume()
     volumes=volume,
     timeout=3600,  # 1 hour
 )
-def run_script(command: str, skyrl_path: str):
+def run_script(command: str):
     """
-    Run any command from the SkyRL repo.
-    Example: run_script.remote("uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k")
+    Runs COMMAND inside SkyRL/skyrl-train
     """
     import subprocess
     import os
@@ -99,7 +99,7 @@ def run_script(command: str, skyrl_path: str):
     print(f"Initial working directory: {os.getcwd()}")
 
     # Change to the skyrl-train directory
-    run_command_dir = os.path.join(repo_root, skyrl_path.lstrip("/"))
+    run_command_dir = os.path.join(repo_root, "skyrl-train")
     os.chdir(run_command_dir)
     print(f"Changed to directory: {os.getcwd()}")
 
@@ -165,19 +165,17 @@ def run_script(command: str, skyrl_path: str):
 
 
 @app.local_entrypoint()
-def main(command: str = "nvidia-smi", path_in_skyrl: str = "skyrl-train"):
-    """Main entry-point for running a command in Modal-integrated SkyRL environmenmt
+def main(command: str = "nvidia-smi"):
+    """Main entry-point for running a command in Modal-integrated SkyRL environmenmt.
+    The given command will be ran inside SkyRL/skyrl-train/
 
     Args:
         command (str, optional): Command to run. Defaults to "nvidia-smi".
-        path_in_skyrl (str, optional): Directory in which to run the command.
-            This must be a valid directory within your local SkyRL repo. Defaults to "skyrl-train".
 
     Examples:
         modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
-        MODAL_APP_NAME=benji_skyrl_app WANDB_API_KEY=... modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+        MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
     """
     print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
-    print(f"{'=' * 5} Running inside: {path_in_skyrl} {'=' * 5}")
-    run_script.remote(command, path_in_skyrl)
+    run_script.remote(command)
     print(f"\n{'=' * 5} Command completed successfully {'=' * 5}")
