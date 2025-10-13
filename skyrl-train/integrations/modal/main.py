@@ -80,7 +80,7 @@ volume = create_modal_volume()
 
 @app.function(
     image=image,
-    gpu="L4:1",
+    gpu=os.environ.get("MODAL_GPU", "L4:1"),
     volumes=volume,
     timeout=3600,  # 1 hour
 )
@@ -174,7 +174,7 @@ def main(command: str = "nvidia-smi"):
 
     Examples:
         modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
-        MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+        MODAL_GPU=A100:4 MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
     """
     print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
     run_script.remote(command)

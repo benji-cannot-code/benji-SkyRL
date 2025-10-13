@@ -46,7 +46,7 @@ modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
 #### 4. Run from a different directory in the repo
 ```bash
 modal run main.py \
-  --command "uv run search/run_skyrl_train_search.py" 
+  --command "uv run search/run_skyrl_train_search.py"
 ```
 
 ## Configuration
@@ -62,11 +62,13 @@ Configure the integration using environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MODAL_APP_NAME` | Name of your Modal app (useful for team collaboration) | `"my_skyrl_app"` |
+| `MODAL_GPU` | GPU configuration. See [Modal docs](https://modal.com/docs/guide/gpu). Defaults to L4:1 if not specified | `"A100:4"` |
 
 ### Example with Environment Variables
 
 ```bash
 MODAL_APP_NAME=benji_skyrl_app \
+MODAL_GPU=A100:4 \
 modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
 ```
 
