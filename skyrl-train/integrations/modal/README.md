@@ -8,7 +8,7 @@ The Modal integration:
 - **Runs commands** from your local SkyRL repo inside Modal's cloud infrastructure
 - **Sets up a container** based on the SkyRL base image (`novaskyai/skyrl-train-ray-2.48.0-py3.12-cu12.8`)
 - **Mounts your local SkyRL repository** to `/root/SkyRL` in the container
-- **Attaches persistent volumes** for data storage at `/root/data` and `/home/ray/data`
+- **Attaches persistent volumes** for data storage at `/root/data` 
 - **Initializes Ray** automatically for distributed computing
 - **Streams live output** from your commands back to your local terminal
 
