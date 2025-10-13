@@ -11,6 +11,7 @@ set -x
 
 DATA_DIR="/root/data/gsm8k"
 CHECK_POINT_DIR="/root/data/ckpts/gsm8k_1.5B_ckpt"
+EXPORT_PATH="/root/data/export"
 : "${NUM_GPUS:=4}"
 : "${LOGGER:=wandb}" # change to "console" to print to stdout
 
@@ -55,4 +56,5 @@ uv run --isolated --extra $INFERENCE_BACKEND -m skyrl_train.entrypoints.main_bas
   trainer.run_name="gsm8k_test" \
   trainer.resume_mode=null \
   trainer.ckpt_path=$CHECK_POINT_DIR \
+  trainer.export_path=$EXPORT_PATH \
   $@

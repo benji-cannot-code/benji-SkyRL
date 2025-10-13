@@ -40,14 +40,13 @@ modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir
 
 #### 3. Run training script
 ```bash
-modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+modal run main.py --command "bash examples/gsm8k/run_gsm8k_modal.sh"
 ```
 
-#### 4. Run from a different directory in the repo
-```bash
-modal run main.py \
-  --command "uv run search/run_skyrl_train_search.py"
-```
+#### 4. Other scripts
+Be sure to override config variables such as `data.train_data`, `data.val_data`, `trainer.ckpt_path`,
+and `trainer.export_path` so they point to the correct persistence location inside the container, which
+defaults to `/root/data`
 
 ## Configuration
 
@@ -69,7 +68,7 @@ Configure the integration using environment variables:
 ```bash
 MODAL_APP_NAME=benji_skyrl_app \
 MODAL_GPU=A100:4 \
-modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+modal run main.py --command "bash examples/gsm8k/run_gsm8k_modal.sh"
 ```
 
 ## How It Works
@@ -106,7 +105,7 @@ To modify resources, edit the `@app.function()` decorator in `main.py`:
 ```python
 @app.function(
     image=image,
-    gpu="A100:1",  # Change GPU type/count
+    gpu="L4:1",  # use env var to configure this
     volumes=volume,
     timeout=7200,  # Change timeout (in seconds)
 )

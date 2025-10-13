@@ -126,17 +126,6 @@ def run_script(command: str):
     # Use 'auto' to automatically detect the Ray cluster instead of hardcoded IP
     os.environ["RAY_ADDRESS"] = "auto"
 
-    # Create symlink so /home/ray/data points to /root/data (where volume is mounted)
-    print("\n=== Setting up data directory symlink ===")
-    os.makedirs("/home/ray", exist_ok=True)
-    if os.path.islink("/home/ray/data"):
-        print("Symlink /home/ray/data already exists")
-    elif os.path.exists("/home/ray/data"):
-        print("Warning: /home/ray/data exists but is not a symlink")
-    else:
-        os.symlink("/root/data", "/home/ray/data")
-        print("Created symlink: /home/ray/data -> /root/data")
-
     print(f"Running command: {command}")
     print(f"Working directory: {os.getcwd()}")
     print("=" * 60)
@@ -174,7 +163,7 @@ def main(command: str = "nvidia-smi"):
 
     Examples:
         modal run main.py --command "uv run examples/gsm8k/gsm8k_dataset.py --output_dir /root/data/gsm8k"
-        MODAL_GPU=A100:4 MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_generation_gsm8k.sh"
+        MODAL_GPU=A100:4 MODAL_APP_NAME=benji_skyrl_app modal run main.py --command "bash examples/gsm8k/run_gsm8k_modal.sh"
     """
     print(f"{'=' * 5} Submitting command to Modal: {command} {'=' * 5}")
     run_script.remote(command)
