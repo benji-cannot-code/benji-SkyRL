@@ -156,7 +156,7 @@ def run_script(command: str):
 @app.local_entrypoint()
 def main(command: str = "nvidia-smi"):
     """Main entry-point for running a command in Modal-integrated SkyRL environmenmt.
-    The given command will be ran inside SkyRL/skyrl-train/
+    The given command will be run inside SkyRL/skyrl-train/
 
     Args:
         command (str, optional): Command to run. Defaults to "nvidia-smi".
