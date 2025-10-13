@@ -84,7 +84,6 @@ The `create_modal_image()` function:
 The `create_modal_volume()` function:
 - Creates or attaches a persistent volume named `"skyrl-data"`
 - Mounts it at `/root/data` for data persistence across runs
-- Creates a symlink at `/home/ray/data` pointing to `/root/data`
 
 ### 3. Command Execution
 The `run_script()` function:
