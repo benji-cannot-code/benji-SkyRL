@@ -112,7 +112,7 @@ To modify resources, edit the `@app.function()` decorator in `main.py`:
 
 ## Data Persistence
 
-Data stored in `/root/data` (or `/home/ray/data`) persists across Modal runs. This is useful for:
+Data stored in `/root/data` persists across Modal runs. This is useful for:
 - Storing generated datasets
 - Saving model checkpoints
 - Caching intermediate results
