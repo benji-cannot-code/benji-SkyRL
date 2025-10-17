@@ -2,6 +2,8 @@
 Main entrypoint for evaluation-only.
 """
 
+import time
+
 import asyncio
 
 import hydra
@@ -41,6 +43,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
         await inference_engine_client.wake_up()
         generator = self.get_generator(self.cfg, tokenizer, inference_engine_client)
 
+        eval_start = time.time()
         results: dict[str, Any] = await evaluate(
             eval_dataloader=build_dataloader(self.cfg, self.eval_dataset, is_train=False),
             generator=generator,
@@ -48,6 +51,7 @@ class EvalOnlyEntrypoint(BasePPOExp):
             global_step=None,
             tokenizer=self.tokenizer,
         )
+        print(f"Eval time: {time.time() - eval_start}")
 
         tracker = self.get_tracker()
         tracker.log(results, step=0, commit=True)
@@ -65,7 +69,13 @@ def eval_entrypoint(cfg: DictConfig) -> dict:
 def main(cfg: DictConfig) -> None:
     validate_generator_cfg(cfg)
     initialize_ray(cfg)
+    if cfg.generator.run_engines_locally:
+        print("STARTING EVAL: LOCAL ENGINE")
+    else:
+        print("STARTING EVAL: HTTP SERVER")
+    main_s = time.time()
     metrics = ray.get(eval_entrypoint.remote(cfg))
+    print(f"Total time collecting metrics: {time.time() - main_s}")
     logger.info(f"Metrics from eval only run: {metrics}")
 
 

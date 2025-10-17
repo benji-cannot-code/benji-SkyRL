@@ -1,3 +1,4 @@
+import time
 import torch
 from tqdm import tqdm
 from typing import Dict, List, Any
@@ -66,7 +67,9 @@ async def evaluate(
             "eval",
             global_step,
         )
+        s = time.time()
         generator_output: GeneratorOutput = await generator.generate(generator_input)
+        print(f"Inference time inside eval: {time.time() - s}")
         validate_generator_output(generator_input, generator_output)
         generator_outputs.append(generator_output)
         concat_all_envs.extend(generator_input["env_classes"])
