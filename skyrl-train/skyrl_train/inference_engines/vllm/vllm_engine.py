@@ -283,13 +283,14 @@ class VLLMInferenceEngine(BaseVLLMInferenceEngine):
                 lora_requests = [
                     LoRARequest(lora_name=f"{lora_int_id}", lora_int_id=lora_int_id, lora_path="/dummy_lora_path")
                 ] * batch_size
-
+        s = time.time()
         outputs = await asyncio.to_thread(
             self.llm.generate,
             prompts=[TokensPrompt(prompt_token_ids=r) for r in prompt_token_ids],
             sampling_params=sampling_params,
             lora_request=lora_requests,
         )
+        print(f"Engine Inference: {time.time() - s}")
 
         return self._postprocess_outputs(outputs)
 
@@ -463,7 +464,9 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
             request_id = str(uuid4().hex)
             task = asyncio.create_task(self._collect_outputs(prompt, request_id, sampling_params))
             tasks.append(task)
+        s = time.time()
         outputs = await asyncio.gather(*tasks)
+        print(f"Async Engine Inference: {time.time() - s}")
 
         return self._postprocess_outputs(outputs)
 
