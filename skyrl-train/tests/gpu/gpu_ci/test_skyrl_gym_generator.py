@@ -7,6 +7,7 @@ import pytest
 import ray
 from transformers import AutoTokenizer
 from skyrl_train.inference_engines.ray_wrapped_inference_engine import create_ray_wrapped_inference_engines
+from skyrl_train.inference_engines.remote_inference_engine import create_remote_inference_engines
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 from skyrl_train.generators.skyrl_gym_generator import SkyRLGymGenerator
@@ -103,6 +104,14 @@ async def run_generator_end_to_end(
         sleep_level=1,  # in unit tests that do not explicitly sync weights, we do not discard weights
     )
 
+    # inference_engines = create_remote_inference_engines(
+    #     urls = ["127.0.0.1:8011"],
+    #     model_name=model,
+    #     engine_backend="vllm",
+    #     tokenizer=tokenizer,
+    #     tensor_parallel_size=1,
+    # )
+
     # Create a mock generator config
     default_cfg = get_default_config()
     OmegaConf.update(
@@ -171,21 +180,33 @@ async def run_generator_end_to_end(
     # Attach request-time sampling params into the generator input
     input_batch["sampling_params"] = get_sampling_params_for_backend(
         "vllm",
-        DictConfig(
-            {
-                "temperature": 1.0,
-                "top_p": 1.0,
-                "top_k": -1,
-                "max_generate_length": max_generate_length,
-                "min_p": 0.0,
-                "logprobs": None,
-                "stop": ["</search>", "</answer>"] if env_class == "search" else None,
-            }
-        ),
+        # DictConfig(
+        #     {
+        #         "temperature": 1.0,
+        #         "top_p": 1.0,
+        #         "top_k": -1,
+        #         "max_generate_length": max_generate_length,
+        #         "min_p": 0.0,
+        #         "logprobs": None,
+        #         "stop": ["</search>", "</answer>"] if env_class == "search" else None,
+        #     }
+        # ),
+        DictConfig({
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": -1,
+            "max_generate_length": max_generate_length,
+            "min_p": 0.0,
+            "logprobs": None,
+            "stop": ["</search>", "</answer>"] if env_class == "search" else None,
+            "seed": 42,
+        })
     )
 
     with Timer(f"generate_responses_async_engine_{use_async_engine}"):
         generator_output = await generator.generate(input_batch)
+
+    print(f"Num tokens gen: {sum(len(x) for x in generator_output["response_ids"])}")
 
     prompts_out = generator_output["prompt_token_ids"]
     outputs = [
@@ -218,6 +239,7 @@ async def run_generator_end_to_end(
         assert response_length == len(outputs[i]["loss_mask"]), f"Output {i} loss mask length mismatch"
 
     # TODO (tgriggs): Extend this test to compare the outputs to HF generation with temperature 0
+    print("All done")
     return generator_output
 
 
@@ -261,16 +283,16 @@ async def test_generator_multi_turn_search():
             use_async_engine=True,
             batched=False,
             n_samples_per_prompt=5,
-            num_inference_engines=2,
-            tensor_parallel_size=2,
-            model="Qwen/Qwen2.5-1.5B-Instruct",
+            num_inference_engines=1,
+            tensor_parallel_size=1,
+            model="Qwen/Qwen2.5-0.5B-Instruct",
             max_prompt_length=2048,
             max_input_length=4096,
-            max_generate_length=4096,
+            max_generate_length=512,
             data_path=os.path.expanduser("~/data/searchR1/validation.parquet"),
             env_class="search",
             num_prompts=2,
-            max_turns=2,
+            max_turns=3,
             use_conversation_multi_turn=False,
             max_env_workers=0,
         )
@@ -421,3 +443,32 @@ async def test_generator_multi_turn_search():
 #                 assert sum(1 for _ in prompt_token_ids if _ == tokenizer.eos_token_id) == 2  # 1 system eos, 1 user eos
 #     finally:
 #         ray.shutdown()
+
+
+"""
+http:
+2025-10-20 18:02:00.049 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:196 - generate_responses_async_engine_True, time cost: 93.08s
+Num tokens gen: 5762
+Multi Turn Generation: 130.8804292678833
+
+2025-10-20 18:06:23.220 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:196 - generate_responses_async_engine_True, time cost: 47.56s
+Num tokens gen: 3696
+Multi Turn Generation: 85.80516600608826
+
+2025-10-20 18:13:57.413 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 8.23s
+Num tokens gen: 15184
+Multi Turn Generation: 46.62226867675781
+
+
+ray:
+2025-10-20 18:27:30.793 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:205 - generate_responses_async_engine_True, time cost: 1.96s
+Num tokens gen: 1241
+Multi Turn Generation: 82.81549739837646
+
+2025-10-20 18:35:14.684 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:205 - generate_responses_async_engine_True, time cost: 226.48s
+Num tokens gen: 1676
+Multi Turn Generation: 308.1553807258606
+
+51713
+
+"""
