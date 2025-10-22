@@ -5,6 +5,8 @@ uses SkyRL-Gym as the environment.
 For details, see https://skyrl.readthedocs.io/en/latest/tutorials/skyrl_gym_generator.html
 """
 
+import time
+
 import asyncio
 import copy
 from uuid import uuid4
@@ -182,6 +184,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         # Accumulate per-step rewards. Format: (reward, response_end_token_idx)
         per_step_rewards: List[Tuple[float, Optional[int]]] = []
 
+        self.agent_loop_count += 1
         while not done:
             # 1. Generate output
             if retokenize_chat_history:
@@ -193,7 +196,10 @@ class SkyRLGymGenerator(GeneratorInterface):
                 engine_input = InferenceEngineInput(
                     prompt_token_ids=[input_ids], session_ids=[session_id], sampling_params=sampling_params
                 )
+            s = time.time()
             engine_output = await self.inference_engine_client.generate(engine_input)
+            self.pure_inf_time += time.time() - s
+            self.gen_count += 1
             output = engine_output["responses"][0]
             output_ids = engine_output["response_ids"][0]
             stop_reason = engine_output["stop_reasons"][0]
@@ -426,6 +432,10 @@ class SkyRLGymGenerator(GeneratorInterface):
         max_tokens = self.generator_cfg.sampling_params.max_generate_length
         max_input_length = self.generator_cfg.max_input_length
 
+        self.pure_inf_time = 0
+        self.gen_count = 0
+        self.agent_loop_count = 0
+
         if self.batched:
             return await self.generate_batched(
                 prompts, env_classes, env_extras, max_tokens, max_input_length, sampling_params
@@ -489,6 +499,10 @@ class SkyRLGymGenerator(GeneratorInterface):
             "rollout_metrics": rollout_metrics,
             "rollout_logprobs": rollout_logprobs,
         }
+
+        print(f"Total pure inference: {self.pure_inf_time}")
+        print(f"Inference time per agent loop: {self.pure_inf_time / self.agent_loop_count}")
+        print(f"Inference time per gen call: {self.pure_inf_time / self.gen_count}")
 
         return generator_output
 

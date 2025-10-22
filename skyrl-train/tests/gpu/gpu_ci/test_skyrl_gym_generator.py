@@ -85,32 +85,32 @@ async def run_generator_end_to_end(
     """
     tokenizer = AutoTokenizer.from_pretrained(model)
 
-    inference_engines = create_ray_wrapped_inference_engines(
-        num_inference_engines=num_inference_engines,
-        tensor_parallel_size=tensor_parallel_size,
-        model_dtype="bfloat16",
-        pretrain=model,
-        seed=42,
-        vllm_v1_disable_multiproc=True,
-        enable_prefix_caching=True,
-        enforce_eager=True,
-        shared_pg=None,
-        gpu_memory_utilization=0.8,
-        inference_engine_enable_sleep=True,
-        async_engine=use_async_engine,
-        max_num_batched_tokens=8192,
-        max_num_seqs=1024,
-        tokenizer=tokenizer,
-        sleep_level=1,  # in unit tests that do not explicitly sync weights, we do not discard weights
-    )
-
-    # inference_engines = create_remote_inference_engines(
-    #     urls = ["127.0.0.1:8011"],
-    #     model_name=model,
-    #     engine_backend="vllm",
-    #     tokenizer=tokenizer,
+    # inference_engines = create_ray_wrapped_inference_engines(
+    #     num_inference_engines=1,
     #     tensor_parallel_size=1,
+    #     model_dtype="bfloat16",
+    #     pretrain=model,
+    #     seed=42,
+    #     vllm_v1_disable_multiproc=True,
+    #     enable_prefix_caching=True,
+    #     enforce_eager=True,
+    #     shared_pg=None,
+    #     gpu_memory_utilization=0.8,
+    #     inference_engine_enable_sleep=True,
+    #     async_engine=use_async_engine,
+    #     max_num_batched_tokens=8192,
+    #     max_num_seqs=1024,
+    #     tokenizer=tokenizer,
+    #     sleep_level=1,  # in unit tests that do not explicitly sync weights, we do not discard weights
     # )
+
+    inference_engines = create_remote_inference_engines(
+        urls = ["127.0.0.1:8011"],
+        model_name=model,
+        engine_backend="vllm",
+        tokenizer=tokenizer,
+        tensor_parallel_size=1,
+    )
 
     # Create a mock generator config
     default_cfg = get_default_config()
@@ -243,34 +243,6 @@ async def run_generator_end_to_end(
     return generator_output
 
 
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize(
-#     ("use_async_engine", "batched", "n_samples_per_prompt", "num_inference_engines", "tensor_parallel_size"),
-#     [
-#         (False, True, 5, 2, 1),  # tests SkyRLGymGenerator.generate_batched for single-turn
-#         (True, False, 5, 1, 2),  # tests SkyRLGymGenerator.agent_loop for single-turn
-#         # Add more combinations as needed
-#     ],
-# )
-# async def test_generator_single_turn_gsm8k(
-#     use_async_engine, batched, n_samples_per_prompt, num_inference_engines, tensor_parallel_size
-# ):
-#     """
-#     Test the generator with a single turn of GSM8K
-#     """
-#     initialize_ray(get_test_actor_config())
-#     try:
-#         await run_generator_end_to_end(
-#             use_async_engine=use_async_engine,
-#             batched=batched,
-#             n_samples_per_prompt=n_samples_per_prompt,
-#             num_inference_engines=num_inference_engines,
-#             tensor_parallel_size=tensor_parallel_size,
-#         )
-#     finally:
-#         ray.shutdown()
-
-
 @pytest.mark.asyncio
 async def test_generator_multi_turn_search():
     """
@@ -301,174 +273,64 @@ async def test_generator_multi_turn_search():
         ray.shutdown()
 
 
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize(
-#     "model_name", ["unsloth/Llama-3.2-1B-Instruct", "Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-0.6B"]
-# )
-# async def test_generator_formatting_use_conversation_multi_turn(model_name):
-#     """
-#     Test generator formatting when using conversation formatting for multi-turn
-#     """
-#     initialize_ray(get_test_actor_config())
-#     try:
-#         tokenizer = AutoTokenizer.from_pretrained(model_name)
-#         generator_output = await run_generator_end_to_end(
-#             use_async_engine=True,
-#             batched=False,
-#             n_samples_per_prompt=1,
-#             num_inference_engines=1,
-#             tensor_parallel_size=1,
-#             model=model_name,
-#             max_prompt_length=3000,
-#             max_input_length=10000,
-#             max_generate_length=3000,
-#             env_class="test_env",
-#             num_prompts=2,
-#             max_turns=3,
-#             use_conversation_multi_turn=True,
-#         )
-
-#         for i, resp_ids in enumerate(generator_output["response_ids"]):
-#             loss_mask = generator_output["loss_masks"][i]
-#             prompt_token_ids = generator_output["prompt_token_ids"][i]
-#             stop_reason = generator_output["stop_reasons"][i]
-#             masked_out_resp_ids = [resp_ids[j] for j in range(len(resp_ids)) if loss_mask[j] == 0]
-#             masked_in_resp_ids = [resp_ids[j] for j in range(len(resp_ids)) if loss_mask[j] == 1]
-
-#             masked_out_resp_str = tokenizer.decode(masked_out_resp_ids)
-#             masked_in_resp_str = tokenizer.decode(masked_in_resp_ids)
-
-#             assert (
-#                 MODEL_TO_GENERATION_PROMPT[model_name] in masked_out_resp_str
-#                 and MODEL_TO_GENERATION_PROMPT[model_name] not in masked_in_resp_str
-#             ), "generation prompts should be loss masked out"
-
-#             # Observations and EOS expectations only strictly apply when the model finished turns
-#             if stop_reason == "stop":
-#                 assert (
-#                     f"{OBSERVATION_PROMPT} 1" in masked_out_resp_str
-#                 ), f'"{OBSERVATION_PROMPT} 1" observation should be loss masked out'
-#                 assert (
-#                     f"{OBSERVATION_PROMPT} 2" in masked_out_resp_str
-#                 ), f'"{OBSERVATION_PROMPT} 2" observation should be loss masked out'
-#                 # TODO(Charlie): add more rigorous tests that is robust to stop_reason being length.
-#                 # Either make GeneratorOutput return stop reason for each turn, or change the way we manage
-#                 # max generation length.
-#                 num_resp_eos = sum(1 for _ in masked_in_resp_ids if _ == tokenizer.eos_token_id)
-#                 num_total_eos = sum(1 for _ in resp_ids if _ == tokenizer.eos_token_id)
-#                 common_msg = "Could be due to stop_reason is length in some of the turns."
-#                 # count number of eos tokens in masked_in_resp_ids: 1 eos per assistant response (3 turns)
-#                 if num_resp_eos != 3:
-#                     logger.warning(f"Got {num_resp_eos} eos tokens in masked_in_resp_ids, expected 3. {common_msg}")
-#                 # total eos in full response: 2 user eos + 3 assistant eos
-#                 if num_total_eos != 5:
-#                     logger.warning(f"Got {num_total_eos} eos tokens in resp_ids, expected 5. {common_msg}")
-#             else:
-#                 # On length stops, the model may not produce EOS at the end of each assistant turn.
-#                 # Only check that generation prompts are masked out.
-#                 logger.warning(f"Got stop reason {stop_reason}, so we did not fully check the response")
-#             if model_name == "Qwen/Qwen3-0.6B":
-#                 assert (
-#                     sum(1 for _ in prompt_token_ids if _ == tokenizer.eos_token_id) == 1
-#                 )  # 1 user eos (no system for Qwen3)
-#             else:
-#                 assert sum(1 for _ in prompt_token_ids if _ == tokenizer.eos_token_id) == 2  # 1 system eos, 1 user eos
-#     finally:
-#         ray.shutdown()
-
-
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize(
-#     "model_name", ["unsloth/Llama-3.2-1B-Instruct", "Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-0.6B"]
-# )
-# async def test_generator_formatting_no_use_conversation_multi_turn(model_name):
-#     """
-#     Test generator formatting when not using conversation formatting for multi-turn
-#     """
-#     initialize_ray(get_test_actor_config())
-#     try:
-#         tokenizer = AutoTokenizer.from_pretrained(model_name)
-#         generator_output = await run_generator_end_to_end(
-#             use_async_engine=True,
-#             batched=False,
-#             n_samples_per_prompt=1,
-#             num_inference_engines=1,
-#             tensor_parallel_size=1,
-#             model=model_name,
-#             max_prompt_length=3000,
-#             max_input_length=10000,
-#             max_generate_length=3000,
-#             env_class="test_env",
-#             num_prompts=2,
-#             max_turns=3,
-#             use_conversation_multi_turn=False,
-#         )
-
-#         for i, resp_ids in enumerate(generator_output["response_ids"]):
-#             loss_mask = generator_output["loss_masks"][i]
-#             prompt_token_ids = generator_output["prompt_token_ids"][i]
-#             masked_out_resp_ids = [resp_ids[j] for j in range(len(resp_ids)) if loss_mask[j] == 0]
-#             masked_in_resp_ids = [resp_ids[j] for j in range(len(resp_ids)) if loss_mask[j] == 1]
-
-#             prompt_str = tokenizer.decode(prompt_token_ids)
-#             resp_str = tokenizer.decode(resp_ids)
-#             masked_out_resp_str = tokenizer.decode(masked_out_resp_ids)
-#             masked_in_resp_str = tokenizer.decode(masked_in_resp_ids)
-
-#             assert (
-#                 f"{OBSERVATION_PROMPT} 1" in masked_out_resp_str
-#             ), f'"{OBSERVATION_PROMPT} 1" observation should be loss masked out'
-#             assert (
-#                 f"{OBSERVATION_PROMPT} 2" in masked_out_resp_str
-#             ), f'"{OBSERVATION_PROMPT} 2" observation should be loss masked out'
-#             assert (
-#                 prompt_str.count(MODEL_TO_GENERATION_PROMPT[model_name])
-#                 + resp_str.count(MODEL_TO_GENERATION_PROMPT[model_name])
-#                 == 1
-#             ), "the single generation prompt should be included in the prompt"
-#             assert (
-#                 MODEL_TO_GENERATION_PROMPT[model_name] in prompt_str
-#                 and MODEL_TO_GENERATION_PROMPT[model_name] not in masked_in_resp_str
-#             ), "the single generation prompt should be included in the prompt"
-
-#             # count number of eos tokens in masked_in_resp_ids
-#             assert (
-#                 sum(1 for _ in masked_in_resp_ids if _ == tokenizer.eos_token_id) == 1
-#             )  # 1 eos for each assistant response
-#             if model_name == "Qwen/Qwen3-0.6B":
-#                 assert (
-#                     sum(1 for _ in prompt_token_ids if _ == tokenizer.eos_token_id) == 1
-#                 )  # 1 user eos (no system for Qwen3)
-#             else:
-#                 assert sum(1 for _ in prompt_token_ids if _ == tokenizer.eos_token_id) == 2  # 1 system eos, 1 user eos
-#     finally:
-#         ray.shutdown()
-
 
 """
+g5.8xlarge
+with vllm cache removed
+
 http:
-2025-10-20 18:02:00.049 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:196 - generate_responses_async_engine_True, time cost: 93.08s
-Num tokens gen: 5762
-Multi Turn Generation: 130.8804292678833
-
-2025-10-20 18:06:23.220 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:196 - generate_responses_async_engine_True, time cost: 47.56s
-Num tokens gen: 3696
-Multi Turn Generation: 85.80516600608826
-
-2025-10-20 18:13:57.413 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 8.23s
-Num tokens gen: 15184
-Multi Turn Generation: 46.62226867675781
+Total pure inference: 2033.9169204235077
+Inference time per agent loop: 203.39169204235077
+Inference time per gen call: 70.13506622150027
+2025-10-22 20:29:48.690 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 226.21s
+Num tokens gen: 3098
 
 
-ray:
-2025-10-20 18:27:30.793 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:205 - generate_responses_async_engine_True, time cost: 1.96s
-Num tokens gen: 1241
-Multi Turn Generation: 82.81549739837646
-
-2025-10-20 18:35:14.684 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:205 - generate_responses_async_engine_True, time cost: 226.48s
-Num tokens gen: 1676
-Multi Turn Generation: 308.1553807258606
-
-51713
+engine:
+Total pure inference: 3841.5559220314026
+Inference time per agent loop: 384.15559220314026
+Inference time per gen call: 153.6622368812561
+2025-10-22 20:20:23.926 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 451.84s
+Num tokens gen: 2775
+All done
+Multi Turn Generation: 547.9502136707306
 
 """
+
+
+
+"""
+g5.8xlarge
+
+
+http:
+Total pure inference: 3112.8866250514984
+Inference time per agent loop: 311.28866250514983
+Inference time per gen call: 103.76288750171662
+2025-10-22 08:04:42.602 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 450.94s
+Num tokens gen: 3568
+All done
+Multi Turn Generation: 490.16574335098267
+
+
+
+
+
+
+engine:
+
+Total pure inference: 3886.377058029175
+2025-10-20 22:53:22.493 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 451.82s
+Num tokens gen: 2772
+All done
+Multi Turn Generation: 547.4816946983337
+
+Total pure inference: 3212.138909101486
+Inference time per agent loop: 321.2138909101486
+Inference time per gen call: 128.48555636405945
+2025-10-22 07:22:06.208 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 406.89s
+Num tokens gen: 2801
+All done
+Multi Turn Generation: 501.0912811756134
+"""
+
