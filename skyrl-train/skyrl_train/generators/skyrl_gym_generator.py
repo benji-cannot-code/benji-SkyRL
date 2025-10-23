@@ -424,6 +424,7 @@ class SkyRLGymGenerator(GeneratorInterface):
         Returns:
             GeneratorOutput
         """
+        await self.inference_engine_client.reset_prefix_cache()
         prompts = input_batch["prompts"]
         env_classes = input_batch["env_classes"]
         env_extras = input_batch["env_extras"]

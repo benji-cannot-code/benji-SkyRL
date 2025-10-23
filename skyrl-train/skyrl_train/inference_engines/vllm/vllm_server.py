@@ -95,7 +95,9 @@ class VllmServer:
 
         @app.post("/reset_prefix_cache")
         async def _reset_prefix_cache(request: Request):
+            print("=== RESET PREFIX CACHE CALLED ===")
             await engine.reset_prefix_cache()
+            print("=== RESET PREFIX CACHE COMPLETED ===")
             return {"status": "ok"}
 
         @app.post("/update_weights")

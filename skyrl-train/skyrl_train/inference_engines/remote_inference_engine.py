@@ -223,9 +223,11 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         else:
             raise ValueError(f"Invalid engine backend: {self.engine_backend}")
 
+        print(f"=== Calling reset_prefix_cache on {self.url}/{reset_prefix_cache_method} ===")
         async with aiohttp.ClientSession() as session:
             resp = await session.post(f"{self.url}/{reset_prefix_cache_method}")
             text = await resp.text()
+            print(f"=== Reset prefix cache response: status={resp.status}, body={text} ===")
 
         # First try to parse it as JSON
         try:

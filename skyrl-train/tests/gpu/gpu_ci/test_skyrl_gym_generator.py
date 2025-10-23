@@ -85,32 +85,35 @@ async def run_generator_end_to_end(
     """
     tokenizer = AutoTokenizer.from_pretrained(model)
 
-    # inference_engines = create_ray_wrapped_inference_engines(
-    #     num_inference_engines=1,
-    #     tensor_parallel_size=1,
-    #     model_dtype="bfloat16",
-    #     pretrain=model,
-    #     seed=42,
-    #     vllm_v1_disable_multiproc=True,
-    #     enable_prefix_caching=True,
-    #     enforce_eager=True,
-    #     shared_pg=None,
-    #     gpu_memory_utilization=0.8,
-    #     inference_engine_enable_sleep=True,
-    #     async_engine=use_async_engine,
-    #     max_num_batched_tokens=8192,
-    #     max_num_seqs=1024,
+    inference_engines = create_ray_wrapped_inference_engines(
+        num_inference_engines=1,
+        tensor_parallel_size=1,
+        model_dtype="bfloat16",
+        pretrain=model,
+        seed=42,
+        vllm_v1_disable_multiproc=False,
+        enable_prefix_caching=True,
+        enforce_eager=False,
+        shared_pg=None,
+        gpu_memory_utilization=0.8,
+        inference_engine_enable_sleep=False,
+        async_engine=True,
+        max_num_batched_tokens=8192,
+        max_num_seqs=1024,
+        tokenizer=tokenizer,
+        sleep_level=1,  # in unit tests that do not explicitly sync weights, we do not discard weights
+    )
+
+    # inference_engines = create_remote_inference_engines(
+    #     urls = ["127.0.0.1:8011"],
+    #     model_name=model,
+    #     engine_backend="vllm",
     #     tokenizer=tokenizer,
-    #     sleep_level=1,  # in unit tests that do not explicitly sync weights, we do not discard weights
+    #     tensor_parallel_size=1,
     # )
 
-    inference_engines = create_remote_inference_engines(
-        urls = ["127.0.0.1:8011"],
-        model_name=model,
-        engine_backend="vllm",
-        tokenizer=tokenizer,
-        tensor_parallel_size=1,
-    )
+    for engine in inference_engines:
+        await engine.reset_prefix_cache()
 
     # Create a mock generator config
     default_cfg = get_default_config()
@@ -240,6 +243,27 @@ async def run_generator_end_to_end(
 
     # TODO (tgriggs): Extend this test to compare the outputs to HF generation with temperature 0
     print("All done")
+    # # Compute and print prefix cache hit rate by issuing a lightweight /completions call
+    # try:
+    #     completion_body = {
+    #         "model": model,
+    #         "prompt": prompts_out,
+    #         "max_tokens": 1,
+    #     }
+    #     completion_resp = await inference_engine_client.completion(
+    #         {
+    #             "json": completion_body,
+    #             "headers": {"Content-Type": "application/json"},
+    #         }
+    #     )
+    #     usage = completion_resp.get("usage", {})
+    #     prompt_tokens = usage.get("prompt_tokens", 0)
+    #     prompt_tokens_details = usage.get("prompt_tokens_details") or {}
+    #     cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+    #     hit_rate = (cached_tokens / prompt_tokens) if prompt_tokens else 0.0
+    #     print(f"Prefix cache hit rate: {hit_rate:.2%} ({cached_tokens}/{prompt_tokens})")
+    # except Exception as e:
+    #     print(f"Failed to compute prefix cache hit rate: {e}")
     return generator_output
 
 
@@ -285,6 +309,41 @@ Inference time per gen call: 70.13506622150027
 2025-10-22 20:29:48.690 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 226.21s
 Num tokens gen: 3098
 
+http (uni backend, enforce eager slower, reset)
+Total pure inference: 21.17117428779602
+Inference time per agent loop: 2.117117428779602
+Inference time per gen call: 0.8468469715118409
+2025-10-23 04:14:58.389 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:209 - generate_responses_async_engine_True, time cost: 3.07s
+Num tokens gen: 1751
+All done
+Multi Turn Generation: 42.02166533470154
+
+
+
+http (uni backend, do not enforce eager (default) faster, reset)
+
+
+
+engine (do not enforce eager, faster inference):
+Total pure inference: 3247.0338027477264
+Inference time per agent loop: 324.70338027477266
+Inference time per gen call: 129.88135210990905
+2025-10-22 21:19:01.393 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:206 - generate_responses_async_engine_True, time cost: 405.85s
+Num tokens gen: 2394
+
+RESET
+Total pure inference: 3246.9422380924225
+Inference time per agent loop: 324.69422380924226
+Inference time per gen call: 129.8776895236969
+2025-10-23 03:59:50.048 | INFO     | tests.gpu.gpu_ci.test_skyrl_gym_generator:run_generator_end_to_end:209 - generate_responses_async_engine_True, time cost: 405.84s
+Num tokens gen: 2398
+All done
+Multi Turn Generation: 516.7130658626556
+
+
+
+
+
 
 engine:
 Total pure inference: 3841.5559220314026
@@ -296,6 +355,8 @@ All done
 Multi Turn Generation: 547.9502136707306
 
 """
+
+
 
 
 
@@ -334,3 +395,6 @@ All done
 Multi Turn Generation: 501.0912811756134
 """
 
+"""
+rm -rf ~/.cache/vllm && uv run --isolated --extra vllm -m skyrl_train.inference_engines.vllm.vllm_server       --model Qwen/Qwen2.5-0.5B-Instruct       --dtype bfloat16       --tensor-parallel-size 1       --gpu-memory-utilization 0.8       --max-num-batched-tokens 8192       --max-num-seqs 1024       --host 127.0.0.1 --port 8011       --trust-remote-code --distributed-executor-backend uni --enforce-eager
+"""

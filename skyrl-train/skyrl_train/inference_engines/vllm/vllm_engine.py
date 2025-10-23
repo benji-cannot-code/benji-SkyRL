@@ -46,6 +46,8 @@ class Logprob:
 
 def setup_envvars_for_vllm(kwargs, bundle_indices):
     noset_visible_devices = kwargs.pop("noset_visible_devices")
+    # Ensure we are using vLLM V1 engine for parity with the HTTP server
+    # os.environ["VLLM_USE_V1"] = "1"
     if kwargs.get("distributed_executor_backend") == "ray":
         # a hack to make the script work.
         # stop ray from manipulating *_VISIBLE_DEVICES
