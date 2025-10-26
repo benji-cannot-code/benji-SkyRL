@@ -24,6 +24,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         tp_size: Optional[int] = None,
         dp_size: Optional[int] = None,
         ep_size: Optional[int] = None,
+        server_actor: Optional[Any] = None,
     ):
         """Initialize the InferenceEngine."""
         self.url = f"http://{url}"
@@ -33,6 +34,11 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         self._dp_size = dp_size
         self._ep_size = ep_size
         self.tokenizer = tokenizer
+        # Keep a reference to the Ray actor that is running the HTTP server when
+        # the inference engine is colocated inside Ray. This ensures that the
+        # actor (and therefore the server process) stays alive for the lifetime
+        # of the client object.
+        self.server_actor = server_actor
 
     def tp_size(self) -> int:
         return self._tp_size
@@ -250,7 +256,11 @@ def create_remote_inference_engines(
     tensor_parallel_size: Optional[int] = None,
     data_parallel_size: Optional[int] = None,
     expert_parallel_size: Optional[int] = None,
+    server_handles: Optional[List[Any]] = None,
 ):
+    if server_handles is not None:
+        assert len(server_handles) == len(urls), "Number of server handles must match number of URLs"
+
     return [
         RemoteInferenceEngine(
             url=url,
@@ -260,6 +270,7 @@ def create_remote_inference_engines(
             tp_size=tensor_parallel_size,
             dp_size=data_parallel_size,
             ep_size=expert_parallel_size,
+            server_actor=server_handles[i] if server_handles is not None else None,
         )
-        for url in urls
+        for i, url in enumerate(urls)
     ]
