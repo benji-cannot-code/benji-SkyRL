@@ -69,8 +69,30 @@ def create_ray_wrapped_inference_engines_from_config(cfg: DictConfig, colocate_p
     return create_ray_wrapped_inference_engines(**engine_kwargs)
 
 
-def create_remote_inference_engines_from_config(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase):
+def create_remote_inference_engines_from_config(
+    cfg: DictConfig, tokenizer: PreTrainedTokenizerBase, colocate_pg
+):
     # TODO(tgriggs): We may want a separate config for the model name in case it's different from the name used in the OpenAI API
+    ray_server_config = {
+        "dtype": cfg.generator.model_dtype,
+        "enforce_eager": cfg.generator.enforce_eager,
+        "gpu_memory_utilization": cfg.generator.gpu_memory_utilization,
+        "enable_prefix_caching": cfg.generator.enable_prefix_caching,
+        "enable_chunked_prefill": cfg.generator.enable_chunked_prefill,
+        "max_num_batched_tokens": cfg.generator.max_num_batched_tokens,
+        "max_num_seqs": cfg.generator.max_num_seqs,
+        "uvicorn_kwargs": {"log_level": "warning"},
+        "num_gpus": 1,
+        "vllm_v1_disable_multiproc": cfg.generator.vllm_v1_disable_multiproc,
+    }
+
+    if cfg.generator.engine_init_kwargs:
+        from omegaconf import OmegaConf
+
+        ray_server_config["engine_init_kwargs"] = OmegaConf.to_container(
+            cfg.generator.engine_init_kwargs, resolve=True
+        )
+
     return create_remote_inference_engines(
         urls=cfg.generator.remote_inference_engine_urls,
         model_name=cfg.trainer.policy.model.path,
@@ -79,6 +101,9 @@ def create_remote_inference_engines_from_config(cfg: DictConfig, tokenizer: PreT
         tensor_parallel_size=cfg.generator.inference_engine_tensor_parallel_size,
         data_parallel_size=cfg.generator.inference_engine_data_parallel_size,
         expert_parallel_size=cfg.generator.inference_engine_expert_parallel_size,
+        colocate_all=cfg.trainer.placement.colocate_all,
+        shared_pg=colocate_pg,
+        ray_server_config=ray_server_config,
     )
 
 
@@ -259,7 +284,7 @@ class BasePPOExp:
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
-            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
+            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer, self.colocate_pg)
 
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
 

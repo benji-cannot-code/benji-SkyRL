@@ -1,22 +1,33 @@
 import os
 import signal
+import threading
+import time
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+
+import requests
 import uvloop
+from fastapi import Request
 from vllm import AsyncLLMEngine
-from vllm.utils import FlexibleArgumentParser, set_ulimit
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.entrypoints.launcher import serve_http
+from vllm.entrypoints.openai.api_server import (
+    build_app,
+    create_server_socket,
+    init_app_state,
+)
 from vllm.entrypoints.openai.cli_args import (
     make_arg_parser,
     validate_parsed_serve_args,
 )
-from vllm.entrypoints.launcher import serve_http
-from vllm.entrypoints.openai.api_server import (
-    create_server_socket,
-    build_app,
-    init_app_state,
-)
 import vllm.envs as envs
-from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.usage.usage_lib import UsageContext
-from fastapi import Request
+from vllm.utils import FlexibleArgumentParser, set_ulimit
+
+try:
+    import ray
+except ImportError:  # pragma: no cover - ray is expected in most environments
+    ray = None
 
 
 # TODO(tgriggs): Handle errors and use best practices for vLLM server
@@ -143,6 +154,92 @@ class VllmServer:
 
     def run_server_uvloop(self, **uvicorn_kwargs) -> None:
         uvloop.run(self.run_server(**uvicorn_kwargs))
+
+
+def _build_args_from_config(server_config: Dict[str, Any]):
+    parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
+    parser = make_arg_parser(parser)
+    args = parser.parse_args([])
+
+    config_copy = dict(server_config)
+    # Keys that are handled separately and should not become CLI args directly.
+    ignored_keys = {"engine_init_kwargs", "uvicorn_kwargs", "num_gpus", "model_dtype"}
+    for key in list(config_copy.keys()):
+        if key in ignored_keys:
+            continue
+        setattr(args, key, config_copy[key])
+
+    # Allow model_dtype to override dtype for convenience.
+    if "model_dtype" in config_copy and not getattr(args, "dtype", None):
+        setattr(args, "dtype", config_copy["model_dtype"])
+
+    # Apply additional engine initialization kwargs if provided.
+    for key, value in config_copy.get("engine_init_kwargs", {}).items():
+        setattr(args, key, value)
+
+    validate_parsed_serve_args(args)
+    return args
+
+
+if ray is not None:
+
+    from skyrl_train.inference_engines.vllm.vllm_engine import setup_envvars_for_vllm
+
+    @ray.remote
+    class VLLMHTTPServerRayActor:
+        def __init__(
+            self,
+            *,
+            server_config: Dict[str, Any],
+            bundle_indices: Optional[list[int]] = None,
+            noset_visible_devices: bool = False,
+        ):
+            self._uvicorn_kwargs = server_config.get("uvicorn_kwargs", {})
+            self._num_gpus = server_config.get("num_gpus", 1)
+            args = _build_args_from_config(server_config)
+
+            # Ensure log level configuration is passed to uvicorn.
+            if "log_level" not in self._uvicorn_kwargs and getattr(args, "uvicorn_log_level", None):
+                self._uvicorn_kwargs["log_level"] = args.uvicorn_log_level
+
+            env_kwargs = {
+                "noset_visible_devices": noset_visible_devices,
+                "distributed_executor_backend": getattr(args, "distributed_executor_backend", None),
+                "num_gpus": self._num_gpus,
+            }
+            setup_envvars_for_vllm(env_kwargs, bundle_indices)
+
+            self._args = args
+            self._server = VllmServer(args)
+            self._thread = threading.Thread(
+                target=self._run_server,
+                kwargs=self._uvicorn_kwargs,
+                daemon=True,
+            )
+            self._thread.start()
+
+        def _run_server(self, **uvicorn_kwargs):
+            self._server.run_server_uvloop(**uvicorn_kwargs)
+
+        def wait_until_ready(self, timeout_s: int = 60) -> bool:
+            url = f"http://{self._args.host}:{self._args.port}/health"
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(url, timeout=2)
+                    if resp.status_code == 200:
+                        return True
+                except requests.RequestException:
+                    pass
+                time.sleep(1)
+            raise TimeoutError(f"Timed out waiting for vLLM server readiness at {url}")
+
+        async def shutdown(self) -> None:
+            # Exiting the actor will terminate the server process and release resources.
+            ray.actor.exit_actor()
+
+        def get_bind_address(self) -> SimpleNamespace:
+            return SimpleNamespace(host=self._args.host, port=self._args.port)
 
 
 if __name__ == "__main__":
