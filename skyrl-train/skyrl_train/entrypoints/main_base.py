@@ -69,16 +69,34 @@ def create_ray_wrapped_inference_engines_from_config(cfg: DictConfig, colocate_p
     return create_ray_wrapped_inference_engines(**engine_kwargs)
 
 
-def create_remote_inference_engines_from_config(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase):
+def create_remote_inference_engines_from_config(
+    cfg: DictConfig,
+    tokenizer: PreTrainedTokenizerBase,
+    colocate_pg,
+):
     # TODO(tgriggs): We may want a separate config for the model name in case it's different from the name used in the OpenAI API
+    server_actor_handles = None
+    urls = cfg.generator.remote_inference_engine_urls
+
+    if cfg.trainer.placement.colocate_all:
+        if cfg.generator.backend != "vllm":
+            raise NotImplementedError(
+                "Colocated remote inference is currently supported only for the vLLM backend."
+            )
+
+        from skyrl_train.inference_engines.remote_inference_engine import launch_colocated_vllm_servers
+
+        server_actor_handles, urls = launch_colocated_vllm_servers(cfg, colocate_pg)
+
     return create_remote_inference_engines(
-        urls=cfg.generator.remote_inference_engine_urls,
+        urls=urls,
         model_name=cfg.trainer.policy.model.path,
         engine_backend=cfg.generator.backend,
         tokenizer=tokenizer,
         tensor_parallel_size=cfg.generator.inference_engine_tensor_parallel_size,
         data_parallel_size=cfg.generator.inference_engine_data_parallel_size,
         expert_parallel_size=cfg.generator.inference_engine_expert_parallel_size,
+        server_actor_handles=server_actor_handles,
     )
 
 
@@ -259,7 +277,11 @@ class BasePPOExp:
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
-            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
+            inference_engines = create_remote_inference_engines_from_config(
+                self.cfg,
+                tokenizer,
+                colocate_pg=self.colocate_pg,
+            )
 
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
 
