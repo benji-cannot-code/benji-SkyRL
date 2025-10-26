@@ -142,7 +142,7 @@ class DAPOExp(BasePPOExp):
                 self.cfg, self.colocate_pg, tokenizer
             )
         else:
-            inference_engines = create_remote_inference_engines_from_config(self.cfg)
+            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer, self.colocate_pg)
 
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
 
