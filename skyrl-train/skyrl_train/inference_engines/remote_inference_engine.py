@@ -1,13 +1,20 @@
 import aiohttp
+import json
+from typing import Any, Dict, List, Optional, Tuple
+
+import ray
+from loguru import logger
+from ray.util.placement_group import PlacementGroup, PlacementGroupSchedulingStrategy
+from transformers import PreTrainedTokenizerBase
+
 from skyrl_train.inference_engines.base import (
-    InferenceEngineInterface,
     InferenceEngineInput,
+    InferenceEngineInterface,
     InferenceEngineOutput,
     NamedWeightsUpdateRequest,
 )
-from typing import List, Optional, Any, Dict
-import json
-from transformers import PreTrainedTokenizerBase
+from skyrl_train.inference_engines.vllm.vllm_server import VllmServerRayActor
+from skyrl_train.utils import get_all_env_variables, ray_noset_visible_devices
 
 
 class RemoteInferenceEngine(InferenceEngineInterface):
@@ -24,6 +31,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         tp_size: Optional[int] = None,
         dp_size: Optional[int] = None,
         ep_size: Optional[int] = None,
+        server_actor_handle: Optional[Any] = None,
     ):
         """Initialize the InferenceEngine."""
         self.url = f"http://{url}"
@@ -33,6 +41,10 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         self._dp_size = dp_size
         self._ep_size = ep_size
         self.tokenizer = tokenizer
+        # Keep a reference to the Ray actor hosting the HTTP server so it stays alive
+        # for the lifetime of this inference engine. This is a no-op for classic
+        # remote engines that are not launched via Ray.
+        self._server_actor_handle = server_actor_handle
 
     def tp_size(self) -> int:
         return self._tp_size
@@ -242,6 +254,153 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             return await resp.json()
 
 
+def _parse_host_port(url: str) -> Tuple[str, int]:
+    """Parse a host:port pair from a URL-like string."""
+
+    if "//" in url:
+        url = url.split("//", 1)[1]
+    if url.startswith("http"):
+        # In case the scheme wasn't removed correctly
+        url = url.split("//", 1)[-1]
+    if ":" not in url:
+        raise ValueError(f"Remote inference engine URL must include a port: {url}")
+    host, port_str = url.rsplit(":", 1)
+    host = host or "127.0.0.1"
+    return host, int(port_str)
+
+
+def _create_vllm_server_kwargs(
+    *,
+    model: str,
+    model_dtype: str,
+    tensor_parallel_size: int,
+    gpu_memory_utilization: float,
+    enforce_eager: bool,
+    host: str,
+    port: int,
+    distributed_executor_backend: str,
+    enable_prefix_caching: bool,
+    vllm_v1_disable_multiproc: bool,
+    max_num_batched_tokens: int,
+    max_num_seqs: int,
+    engine_init_kwargs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build kwargs for launching a vLLM HTTP server."""
+
+    server_kwargs: Dict[str, Any] = {
+        "model": model,
+        "dtype": model_dtype,
+        "tensor_parallel_size": tensor_parallel_size,
+        "gpu_memory_utilization": gpu_memory_utilization,
+        "enforce_eager": enforce_eager,
+        "host": host,
+        "port": port,
+        "worker_extension_cls": "skyrl_train.inference_engines.vllm.vllm_engine.WorkerWrap",
+        "distributed_executor_backend": distributed_executor_backend,
+        "trust_remote_code": True,
+        "enable_prefix_caching": enable_prefix_caching,
+        "vllm_v1_disable_multiproc": vllm_v1_disable_multiproc,
+        "max_num_batched_tokens": max_num_batched_tokens,
+        "max_num_seqs": max_num_seqs,
+    }
+    server_kwargs.update(engine_init_kwargs or {})
+    return server_kwargs
+
+
+def launch_colocated_vllm_http_servers(
+    *,
+    urls: List[str],
+    num_inference_engines: int,
+    tensor_parallel_size: int,
+    data_parallel_size: int,
+    expert_parallel_size: int,
+    model: str,
+    model_dtype: str,
+    gpu_memory_utilization: float,
+    enforce_eager: bool,
+    enable_prefix_caching: bool,
+    vllm_v1_disable_multiproc: bool,
+    max_num_batched_tokens: int,
+    max_num_seqs: int,
+    engine_init_kwargs: Dict[str, Any],
+    colocate_pg: PlacementGroup,
+    readiness_timeout_s: int = 180,
+) -> Tuple[List[ray.actor.ActorHandle], List[str]]:
+    """Launch vLLM HTTP servers inside Ray actors for colocation."""
+
+    if data_parallel_size != 1:
+        raise NotImplementedError("Colocated HTTP inference currently supports only data_parallel_size=1")
+    if expert_parallel_size != 1:
+        raise NotImplementedError("Colocated HTTP inference does not yet support expert parallelism")
+
+    noset_visible_devices = ray_noset_visible_devices(ray.get(get_all_env_variables.remote()))
+    distributed_executor_backend = "uni" if tensor_parallel_size == 1 else "ray"
+    num_gpus_per_actor = int(tensor_parallel_size == 1)
+    env_num_gpus = 1
+    per_engine_gpu_count = tensor_parallel_size * data_parallel_size
+
+    assert len(urls) == num_inference_engines, (
+        f"Expected {num_inference_engines} remote inference URLs but got {len(urls)}"
+    )
+
+    server_handles: List[ray.actor.ActorHandle] = []
+    resolved_urls: List[str] = []
+
+    actor_cls = ray.remote(VllmServerRayActor)
+
+    for engine_idx in range(num_inference_engines):
+        base_pg_index = engine_idx * per_engine_gpu_count
+        bundle_indices = (
+            list(range(base_pg_index, base_pg_index + tensor_parallel_size))
+            if tensor_parallel_size > 1
+            else None
+        )
+        scheduling_strategy = PlacementGroupSchedulingStrategy(
+            placement_group=colocate_pg,
+            placement_group_capture_child_tasks=True,
+            placement_group_bundle_index=base_pg_index,
+        )
+
+        host, port = _parse_host_port(urls[engine_idx])
+        server_kwargs = _create_vllm_server_kwargs(
+            model=model,
+            model_dtype=model_dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            enforce_eager=enforce_eager,
+            host=host,
+            port=port,
+            distributed_executor_backend=distributed_executor_backend,
+            enable_prefix_caching=enable_prefix_caching,
+            vllm_v1_disable_multiproc=vllm_v1_disable_multiproc,
+            max_num_batched_tokens=max_num_batched_tokens,
+            max_num_seqs=max_num_seqs,
+            engine_init_kwargs=engine_init_kwargs,
+        )
+        server_kwargs.update(
+            {
+                "noset_visible_devices": noset_visible_devices,
+                "num_gpus": env_num_gpus,
+                "bundle_indices": bundle_indices,
+            }
+        )
+
+        handle = actor_cls.options(
+            num_cpus=max(1, num_gpus_per_actor),
+            num_gpus=num_gpus_per_actor,
+            scheduling_strategy=scheduling_strategy,
+        ).remote(server_kwargs=server_kwargs, readiness_timeout_s=readiness_timeout_s)
+        resolved_url = ray.get(handle.ready.remote())
+        server_handles.append(handle)
+        resolved_urls.append(resolved_url)
+        logger.info(
+            f"Launched colocated vLLM HTTP server {engine_idx} at {resolved_url} "
+            f"(bundle_indices={bundle_indices})"
+        )
+
+    return server_handles, resolved_urls
+
+
 def create_remote_inference_engines(
     urls: List[str],
     model_name: str,
@@ -250,16 +409,24 @@ def create_remote_inference_engines(
     tensor_parallel_size: Optional[int] = None,
     data_parallel_size: Optional[int] = None,
     expert_parallel_size: Optional[int] = None,
+    server_actor_handles: Optional[List[Any]] = None,
 ):
-    return [
-        RemoteInferenceEngine(
-            url=url,
-            model_name=model_name,
-            tokenizer=tokenizer,
-            engine_backend=engine_backend,
-            tp_size=tensor_parallel_size,
-            dp_size=data_parallel_size,
-            ep_size=expert_parallel_size,
+    server_actor_handles = server_actor_handles or [None] * len(urls)
+    assert len(server_actor_handles) == len(urls), "server_actor_handles must align with urls"
+
+    engines: List[RemoteInferenceEngine] = []
+    for url, server_actor in zip(urls, server_actor_handles):
+        engines.append(
+            RemoteInferenceEngine(
+                url=url,
+                model_name=model_name,
+                tokenizer=tokenizer,
+                engine_backend=engine_backend,
+                tp_size=tensor_parallel_size,
+                dp_size=data_parallel_size,
+                ep_size=expert_parallel_size,
+                server_actor_handle=server_actor,
+            )
         )
-        for url in urls
-    ]
+
+    return engines

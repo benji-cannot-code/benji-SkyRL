@@ -1,5 +1,8 @@
 import os
 import signal
+import socket
+import threading
+import time
 import uvloop
 from vllm import AsyncLLMEngine
 from vllm.utils import FlexibleArgumentParser, set_ulimit
@@ -18,6 +21,15 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.usage.usage_lib import UsageContext
 from fastapi import Request
 
+try:
+    import ray
+except ModuleNotFoundError:  # pragma: no cover - ray is an optional dependency in some contexts
+    ray = None
+
+from loguru import logger
+
+from skyrl_train.inference_engines.vllm.vllm_engine import setup_envvars_for_vllm
+
 
 # TODO(tgriggs): Handle errors and use best practices for vLLM server
 # TODO(tgriggs): Return correct status codes.
@@ -35,7 +47,8 @@ class VllmServer:
             # Interrupt server on sigterm while initializing
             raise KeyboardInterrupt("terminated")
 
-        signal.signal(signal.SIGTERM, signal_handler)
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, signal_handler)
 
         # TODO(tgriggs): Move this elsewhere, make configurable.
         os.environ["VLLM_USE_V1"] = "1"
@@ -143,6 +156,75 @@ class VllmServer:
 
     def run_server_uvloop(self, **uvicorn_kwargs) -> None:
         uvloop.run(self.run_server(**uvicorn_kwargs))
+
+
+def _create_server_args_from_kwargs(**kwargs):
+    """Create a vLLM server argparse.Namespace from keyword arguments."""
+
+    parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
+    parser = make_arg_parser(parser)
+    args = parser.parse_args([])
+
+    for key, value in kwargs.items():
+        setattr(args, key, value)
+
+    validate_parsed_serve_args(args)
+    return args
+
+
+class VllmServerRayActor:
+    """A small Ray-friendly wrapper that spins up a vLLM HTTP server."""
+
+    def __init__(
+        self,
+        server_kwargs: dict,
+        readiness_timeout_s: int = 120,
+    ) -> None:
+        # Create a copy because we mutate kwargs when configuring the environment.
+        server_kwargs = dict(server_kwargs)
+        bundle_indices = server_kwargs.pop("bundle_indices", None)
+        noset_visible_devices = server_kwargs.pop("noset_visible_devices", False)
+        num_gpus = server_kwargs.pop("num_gpus", 1)
+
+        env_kwargs = {
+            "noset_visible_devices": noset_visible_devices,
+            "num_gpus": num_gpus,
+        }
+        setup_envvars_for_vllm(env_kwargs, bundle_indices)
+
+        self.server_args = _create_server_args_from_kwargs(**server_kwargs)
+        self._server = VllmServer(self.server_args)
+        self._thread = threading.Thread(target=self._server.run_server_uvloop, daemon=True)
+        self._thread.start()
+
+        host = self.server_args.host or "127.0.0.1"
+        port = self.server_args.port
+        self._wait_until_ready(host, port, readiness_timeout_s)
+        self._url = f"{host}:{port}"
+        logger.info(f"vLLM HTTP server started at {self._url}")
+
+    def _wait_until_ready(self, host: str, port: int, timeout_s: int) -> None:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=1.0):
+                    return
+            except OSError:
+                time.sleep(0.5)
+        raise TimeoutError(f"Timed out waiting for vLLM server to start on {host}:{port}")
+
+    def ready(self) -> str:
+        """Return the URL where the server is reachable."""
+
+        return self._url
+
+    def shutdown(self) -> None:
+        """Placeholder shutdown hook. Server exits when actor exits."""
+
+        # The HTTP server will be terminated when the Ray actor process exits. This
+        # method exists to provide a consistent API if explicit shutdown is ever
+        # needed in the future.
+        return None
 
 
 if __name__ == "__main__":

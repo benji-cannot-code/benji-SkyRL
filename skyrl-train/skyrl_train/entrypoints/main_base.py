@@ -10,7 +10,10 @@ from skyrl_train.utils import validate_cfg
 
 from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
-from skyrl_train.inference_engines.remote_inference_engine import create_remote_inference_engines
+from skyrl_train.inference_engines.remote_inference_engine import (
+    create_remote_inference_engines,
+    launch_colocated_vllm_http_servers,
+)
 from skyrl_train.utils.utils import initialize_ray, get_ray_pg_ready_with_timeout
 from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
 from skyrl_train.generators.base import GeneratorInterface
@@ -69,16 +72,54 @@ def create_ray_wrapped_inference_engines_from_config(cfg: DictConfig, colocate_p
     return create_ray_wrapped_inference_engines(**engine_kwargs)
 
 
-def create_remote_inference_engines_from_config(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase):
+def create_remote_inference_engines_from_config(
+    cfg: DictConfig,
+    tokenizer: PreTrainedTokenizerBase,
+    colocate_pg,
+):
     # TODO(tgriggs): We may want a separate config for the model name in case it's different from the name used in the OpenAI API
+    urls = cfg.generator.remote_inference_engine_urls
+    server_actor_handles = None
+
+    if cfg.trainer.placement.colocate_all:
+        if cfg.generator.backend != "vllm":
+            raise NotImplementedError("Colocated HTTP inference is currently supported only for the vLLM backend")
+        if colocate_pg is None:
+            raise ValueError("colocate_pg must be provided when colocate_all=True for remote inference engines")
+
+        engine_init_kwargs = cfg.generator.engine_init_kwargs
+        if engine_init_kwargs is not None:
+            engine_init_kwargs = OmegaConf.to_container(engine_init_kwargs, resolve=True)
+        else:
+            engine_init_kwargs = {}
+
+        server_actor_handles, urls = launch_colocated_vllm_http_servers(
+            urls=urls,
+            num_inference_engines=cfg.generator.num_inference_engines,
+            tensor_parallel_size=cfg.generator.inference_engine_tensor_parallel_size,
+            data_parallel_size=cfg.generator.inference_engine_data_parallel_size,
+            expert_parallel_size=cfg.generator.inference_engine_expert_parallel_size,
+            model=cfg.trainer.policy.model.path,
+            model_dtype=cfg.generator.model_dtype,
+            gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
+            enforce_eager=cfg.generator.enforce_eager,
+            enable_prefix_caching=cfg.generator.enable_prefix_caching,
+            vllm_v1_disable_multiproc=cfg.generator.vllm_v1_disable_multiproc,
+            max_num_batched_tokens=cfg.generator.max_num_batched_tokens,
+            max_num_seqs=cfg.generator.max_num_seqs,
+            engine_init_kwargs=engine_init_kwargs,
+            colocate_pg=colocate_pg,
+        )
+
     return create_remote_inference_engines(
-        urls=cfg.generator.remote_inference_engine_urls,
+        urls=urls,
         model_name=cfg.trainer.policy.model.path,
         engine_backend=cfg.generator.backend,
         tokenizer=tokenizer,
         tensor_parallel_size=cfg.generator.inference_engine_tensor_parallel_size,
         data_parallel_size=cfg.generator.inference_engine_data_parallel_size,
         expert_parallel_size=cfg.generator.inference_engine_expert_parallel_size,
+        server_actor_handles=server_actor_handles,
     )
 
 
@@ -259,7 +300,7 @@ class BasePPOExp:
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
-            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
+            inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer, self.colocate_pg)
 
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
 
