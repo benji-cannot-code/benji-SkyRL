@@ -261,8 +261,8 @@ class BasePPOExp:
         if self.cfg.generator.run_engines_locally:
             inference_engines = create_ray_wrapped_inference_engines_from_config(self.cfg, self.colocate_pg, tokenizer)
         else:
-            # When colocating with HTTP engines (vLLM), spin servers inside Ray and point clients to them
-            if self.cfg.trainer.placement.colocate_all and self.cfg.generator.backend == "vllm":
+            # When colocating with HTTP engines (vLLM/SGLang), spin servers inside Ray and point clients to them
+            if self.cfg.trainer.placement.colocate_all: 
                 inference_engines = create_colocated_remote_engines(self.cfg, tokenizer, self.colocate_pg)
             else:
                 inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
