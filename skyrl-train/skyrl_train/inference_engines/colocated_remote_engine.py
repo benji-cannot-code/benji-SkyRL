@@ -198,6 +198,7 @@ def create_colocated_remote_engines(
         pg = placement_group(bundles, strategy="PACK")
         from skyrl_train.utils.utils import get_ray_pg_ready_with_timeout
         from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
+
         get_ray_pg_ready_with_timeout(pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
     else:
         pg = shared_pg
@@ -274,8 +275,10 @@ def create_colocated_remote_engines(
     print("Sleeping...")
     if cfg.trainer.placement.colocate_all:
         sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
+
         async def _sleep_all():
             await asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines])
+
         try:
             asyncio.run(_sleep_all())
         except RuntimeError:
@@ -283,4 +286,3 @@ def create_colocated_remote_engines(
             loop.run_until_complete(_sleep_all())
 
     return engines
-

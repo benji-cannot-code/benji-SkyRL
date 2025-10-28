@@ -192,8 +192,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             dtypes = request["dtypes"]
             shapes = request["shapes"]
             ipc_handles_b64 = [
-                base64.b64encode(pickle.dumps(extra["ipc_handles"]))  # bytes
-                .decode("ascii")
+                base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii")  # bytes
                 for extra in request["extras"]
             ]
 
@@ -209,9 +208,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 )
                 return await resp.json()
         elif is_ipc:
-            raise ValueError(
-                "CUDA IPC over HTTP is only supported for vLLM backend in colocated mode."
-            )
+            raise ValueError("CUDA IPC over HTTP is only supported for vLLM backend in colocated mode.")
 
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
