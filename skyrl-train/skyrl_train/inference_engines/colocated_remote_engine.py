@@ -214,11 +214,12 @@ def create_colocated_remote_engines(
                 placement_group_capture_child_tasks=True,
                 placement_group_bundle_index=bundle_index,
             )
-            # If using the shared PG (TP==1), reserve fractional GPU to colocate with trainers.
+            # If using the shared PG (TP==1), reserve fractional GPU/CPU to colocate with trainers.
             # Otherwise, we created bundles sized to TP.
             num_gpus_for_actor = 0.2 if use_shared_pg else tensor_parallel_size
+            num_cpus_for_actor = 0.2 if use_shared_pg else 1
             actor = VLLMHTTPServerActor.options(
-                num_cpus=1,
+                num_cpus=num_cpus_for_actor,
                 num_gpus=num_gpus_for_actor,
                 scheduling_strategy=sched,
             ).remote()
@@ -229,12 +230,17 @@ def create_colocated_remote_engines(
 
     # Start servers
     start_refs = []
+    # Use a conservative GPU memory utilization when colocating on same GPU
+    effective_mu = cfg.generator.gpu_memory_utilization
+    if use_shared_pg:
+        effective_mu = 0.3 if effective_mu is None else min(effective_mu, 0.3)
+
     for actor_idx, actor in enumerate(server_actors):
         start_refs.append(
             actor.start.remote(
                 model_path=cfg.trainer.policy.model.path,
                 tensor_parallel_size=tensor_parallel_size,
-                gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
+                gpu_memory_utilization=effective_mu,
                 enforce_eager=cfg.generator.enforce_eager,
                 enable_prefix_caching=cfg.generator.enable_prefix_caching,
                 dtype=cfg.generator.model_dtype,
@@ -264,7 +270,17 @@ def create_colocated_remote_engines(
             )
         )
 
-    # print("Putting engines to sleep")
+    # Put servers to sleep initially to free memory until generation
+    print("Sleeping...")
+    if cfg.trainer.placement.colocate_all:
+        sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
+        async def _sleep_all():
+            await asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines])
+        try:
+            asyncio.run(_sleep_all())
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(_sleep_all())
 
     return engines
 
