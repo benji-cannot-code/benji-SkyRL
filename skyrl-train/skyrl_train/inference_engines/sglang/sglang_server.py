@@ -19,7 +19,6 @@ from sglang.srt.managers.tokenizer_manager import (
     ResumeMemoryOccupationReqInput,
 )
 
-from skyrl_train.utils import torch_dtype_to_str
 from sglang.srt.utils import MultiprocessingSerializer
 
 
@@ -40,9 +39,7 @@ def build_engine_from_args(server_args: ServerArgs) -> Engine:
         # Ensure token-in-token-out
         "skip_tokenizer_init": True,
         # Register our custom CUDA IPC weight loader so load_format is recognized
-        "custom_weight_loader": [
-            "skyrl_train.inference_engines.sglang.sglang_engine.update_weights_cuda_ipc"
-        ],
+        "custom_weight_loader": ["skyrl_train.inference_engines.sglang.sglang_engine.update_weights_cuda_ipc"],
     }
     return Engine(**kwargs)
 

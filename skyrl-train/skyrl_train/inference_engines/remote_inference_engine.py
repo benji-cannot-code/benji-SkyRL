@@ -152,6 +152,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 class _Resp:
                     async def json(self_inner):
                         return {"status": "ok"}
+
                 resp = _Resp()
             else:
                 raise ValueError(f"Invalid engine backend: {self.engine_backend}")
@@ -166,6 +167,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 class _Resp:
                     async def json(self_inner):
                         return {"status": "ok"}
+
                 resp = _Resp()
             else:
                 raise ValueError(f"Invalid engine backend: {self.engine_backend}")
@@ -234,8 +236,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             dtypes = request["dtypes"]
             shapes = request["shapes"]
             ipc_handles_b64 = [
-                base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii")
-                for extra in request["extras"]
+                base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii") for extra in request["extras"]
             ]
 
             async with aiohttp.ClientSession() as session:

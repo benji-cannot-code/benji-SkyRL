@@ -281,7 +281,10 @@ def create_colocated_remote_engines(
 
     Supports backend=="vllm" and backend=="sglang".
     """
-    assert cfg.generator.backend in ("vllm", "sglang"), "Only vLLM or SGLang backend is supported for colocated HTTP engines."
+    assert cfg.generator.backend in (
+        "vllm",
+        "sglang",
+    ), "Only vLLM or SGLang backend is supported for colocated HTTP engines."
 
     num_inference_engines = cfg.generator.num_inference_engines
     tensor_parallel_size = cfg.generator.inference_engine_tensor_parallel_size
