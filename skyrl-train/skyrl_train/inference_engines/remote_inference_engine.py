@@ -1,4 +1,6 @@
 import aiohttp
+import base64
+import pickle
 from skyrl_train.inference_engines.base import (
     InferenceEngineInterface,
     InferenceEngineInput,
@@ -177,17 +179,40 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 return await response.json()
 
     async def update_named_weights(self, request: NamedWeightsUpdateRequest):
+
+        print("Updating named weights...")
+
         if "names" not in request:
             raise ValueError(f"Expected update weight request with 'names' entry, got keys: {request.keys()}")
 
-        assert (
-            len(request["names"]) == 1
-        ), f"Remote inference engines support only requests with a single named weight at a time , got request with {len(request['names'])} entries"
+        # CUDA IPC over HTTP (supported for colocated vLLM servers)
+        is_ipc = request.get("extras") and "ipc_handles" in request["extras"][0]
+        if is_ipc and self.engine_backend == "vllm":
+            names = request["names"]
+            dtypes = request["dtypes"]
+            shapes = request["shapes"]
+            ipc_handles_b64 = [
+                base64.b64encode(pickle.dumps(extra["ipc_handles"]))  # bytes
+                .decode("ascii")
+                for extra in request["extras"]
+            ]
 
-        if request.get("extras") and "ipc_handles" in request["extras"][0]:
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(
+                    f"{self.url}/update_weights_cuda_ipc",
+                    json={
+                        "names": names,
+                        "dtypes": dtypes,
+                        "shapes": shapes,
+                        "ipc_handles_b64": ipc_handles_b64,
+                    },
+                )
+                return await resp.json()
+        elif is_ipc:
             raise ValueError(
-                "Remote inference engines do not support CUDA IPC weight updates. Only local engines support IPC."
+                "CUDA IPC over HTTP is only supported for vLLM backend in colocated mode."
             )
+
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
         elif self.engine_backend == "sglang":
@@ -195,20 +220,20 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         else:
             raise ValueError(f"Invalid engine backend: {self.engine_backend}")
 
+        # Support multiple weights by iterating one-by-one (server expects single name)
         async with aiohttp.ClientSession() as session:
-            name = request["names"][0]
-            dtype = request["dtypes"][0]
-            shape = request["shapes"][0]
-
-            resp = await session.post(
-                f"{self.url}/{weight_update_method}",
-                json={
-                    "name": name,
-                    "dtype": dtype,
-                    "shape": shape,
-                },
-            )
-            return await resp.json()
+            last_resp = None
+            for name, dtype, shape in zip(request["names"], request["dtypes"], request["shapes"]):
+                resp = await session.post(
+                    f"{self.url}/{weight_update_method}",
+                    json={
+                        "name": name,
+                        "dtype": dtype,
+                        "shape": shape,
+                    },
+                )
+                last_resp = await resp.json()
+            return last_resp
 
     # TODO(tgriggs): Come up with a (more) elegant way to handle text or json responses, and test it and handle errors.
     async def reset_prefix_cache(self):
