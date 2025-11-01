@@ -148,12 +148,9 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             if self.engine_backend == "vllm":
                 resp = await session.post(f"{self.url}/wake_up", json={"tags": kwargs.get("tags", None)})
             elif self.engine_backend == "sglang":
-                # No-op for SGLang; avoid memory saver resume to prevent crashes
-                class _Resp:
-                    async def json(self_inner):
-                        return {"status": "ok"}
-
-                resp = _Resp()
+                resp = await session.post(
+                    f"{self.url}/resume_memory_occupation", json={"tags": kwargs.get("tags", None)}
+                )
             else:
                 raise ValueError(f"Invalid engine backend: {self.engine_backend}")
             return await resp.json()
@@ -163,12 +160,9 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             if self.engine_backend == "vllm":
                 resp = await session.post(f"{self.url}/sleep", json={"level": kwargs.get("level", 1)})
             elif self.engine_backend == "sglang":
-                # No-op for SGLang; avoid memory saver release to prevent crashes
-                class _Resp:
-                    async def json(self_inner):
-                        return {"status": "ok"}
-
-                resp = _Resp()
+                resp = await session.post(
+                    f"{self.url}/release_memory_occupation", json={"tags": kwargs.get("tags", None)}
+                )
             else:
                 raise ValueError(f"Invalid engine backend: {self.engine_backend}")
             return await resp.json()

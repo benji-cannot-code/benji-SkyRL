@@ -1,5 +1,5 @@
 import ray
-from ray.util.placement_group import PlacementGroupSchedulingStrategy, placement_group
+from ray.util.placement_group import PlacementGroupSchedulingStrategy, PlacementGroup, placement_group
 
 from skyrl_train.inference_engines.base import (
     InferenceEngineInterface,
@@ -13,7 +13,6 @@ import socket
 import subprocess
 import time
 import urllib.request
-import urllib.error
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
 
@@ -273,18 +272,14 @@ class SGLangHTTPServerActor:
 
 
 def create_colocated_remote_engines(
-    cfg: DictConfig, tokenizer: PreTrainedTokenizerBase, shared_pg=None
+    cfg: DictConfig, tokenizer: PreTrainedTokenizerBase, shared_pg: PlacementGroup
 ) -> List[InferenceEngineInterface]:
     """
-    Launch vLLM HTTP servers inside Ray using a colocated placement group and
-    return RemoteInferenceEngine clients pointing to them.
-
-    Supports backend=="vllm" and backend=="sglang".
+    Launches remote HTTP inference engines in the same placement group as
+    the trainer actors.
     """
-    assert cfg.generator.backend in (
-        "vllm",
-        "sglang",
-    ), "Only vLLM or SGLang backend is supported for colocated HTTP engines."
+    assert cfg.trainer.placement.colocate_all, "colocate_all flag must be true for creating colocated remote engines"
+    assert shared_pg is not None, "Must have valid placement group for colocated training"
 
     num_inference_engines = cfg.generator.num_inference_engines
     tensor_parallel_size = cfg.generator.inference_engine_tensor_parallel_size
@@ -302,6 +297,7 @@ def create_colocated_remote_engines(
 
         get_ray_pg_ready_with_timeout(pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
     else:
+        print("Using true colocation")
         pg = shared_pg
 
     # Launch one server per DP replica for each engine index
@@ -335,8 +331,8 @@ def create_colocated_remote_engines(
     start_refs = []
     # Use a conservative GPU memory utilization when colocating on same GPU
     effective_mu = cfg.generator.gpu_memory_utilization
-    if use_shared_pg:
-        effective_mu = 0.3 if effective_mu is None else min(effective_mu, 0.3)
+    # if use_shared_pg:
+    #     effective_mu = 0.3 if effective_mu is None else min(effective_mu, 0.3)
 
     for actor_idx, actor in enumerate(server_actors):
         if cfg.generator.backend == "vllm":
@@ -366,7 +362,8 @@ def create_colocated_remote_engines(
                     dtype=cfg.generator.model_dtype,
                     mem_fraction_static=effective_mu,
                     enable_prefix_caching=cfg.generator.enable_prefix_caching,
-                    enable_memory_saver=False,
+                    # Enable memory saver to allow sleep() to release GPU memory
+                    enable_memory_saver=True,
                     host=None,
                     port=None,
                     quiet=False,
@@ -396,7 +393,7 @@ def create_colocated_remote_engines(
     # Put servers to sleep initially to free memory until generation.
     # NOTE: For SGLang, avoid pre-sleep right after startup; it may interfere with its warmup
     # and cause a crash. We'll only pre-sleep vLLM here.
-    if cfg.trainer.placement.colocate_all and cfg.generator.backend == "vllm":
+    if cfg.generator.backend == "vllm":
         print("Sleeping...")
         sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
 
@@ -408,5 +405,16 @@ def create_colocated_remote_engines(
         except RuntimeError:
             loop = asyncio.get_event_loop()
             loop.run_until_complete(_sleep_all())
+    else:
+        print("Sleeping sglang...")
+        async def _sleep_all_sglang():
+            await asyncio.gather(*[engine.sleep() for engine in engines])
+
+        try:
+            asyncio.run(_sleep_all_sglang())
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(_sleep_all_sglang())
+
 
     return engines
