@@ -140,40 +140,6 @@ class VLLMHTTPServerActor:
             pass
 
 
-class ColocatedRemoteEngine(RemoteInferenceEngine):
-    """RemoteInferenceEngine that retains a reference to its Ray server actor."""
-
-    def __init__(
-        self,
-        *,
-        server_actor,  # ActorHandle
-        url: str,
-        model_name: str,
-        tokenizer: PreTrainedTokenizerBase,
-        engine_backend: str,
-        tp_size: Optional[int] = None,
-        dp_size: Optional[int] = None,
-        ep_size: Optional[int] = None,
-    ):
-        super().__init__(
-            url=url,
-            model_name=model_name,
-            engine_backend=engine_backend,
-            tokenizer=tokenizer,
-            tp_size=tp_size,
-            dp_size=dp_size,
-            ep_size=ep_size,
-        )
-        self._server_actor = server_actor
-
-    async def teardown(self):
-        await super().teardown()
-        try:
-            await self._server_actor.kill.remote()
-        except Exception:
-            pass
-
-
 @ray.remote
 class SGLangHTTPServerActor:
     """Ray actor that spawns an SGLang HTTP server as a subprocess."""
@@ -268,6 +234,40 @@ class SGLangHTTPServerActor:
             os.kill(self.pid, 15)
             time.sleep(2)
         except ProcessLookupError:
+            pass
+
+
+class ColocatedRemoteEngine(RemoteInferenceEngine):
+    """RemoteInferenceEngine that retains a reference to its Ray server actor."""
+
+    def __init__(
+        self,
+        *,
+        server_actor,  # ActorHandle
+        url: str,
+        model_name: str,
+        tokenizer: PreTrainedTokenizerBase,
+        engine_backend: str,
+        tp_size: Optional[int] = None,
+        dp_size: Optional[int] = None,
+        ep_size: Optional[int] = None,
+    ):
+        super().__init__(
+            url=url,
+            model_name=model_name,
+            engine_backend=engine_backend,
+            tokenizer=tokenizer,
+            tp_size=tp_size,
+            dp_size=dp_size,
+            ep_size=ep_size,
+        )
+        self._server_actor = server_actor
+
+    async def teardown(self):
+        await super().teardown()
+        try:
+            await self._server_actor.kill.remote()
+        except Exception:
             pass
 
 
