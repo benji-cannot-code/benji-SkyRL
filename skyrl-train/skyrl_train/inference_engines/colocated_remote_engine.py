@@ -6,7 +6,7 @@ from skyrl_train.inference_engines.base import (
 )
 from skyrl_train.inference_engines.remote_inference_engine import RemoteInferenceEngine
 
-from typing import Any, List, Optional
+from typing import List, Optional
 import asyncio
 import os
 import socket
@@ -25,16 +25,42 @@ def _get_free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _wait_for_server(host: str, port: int, timeout_seconds: int = 180) -> bool:
-    """Ensure that server is running"""
+def _server_ready(host: str, port: int, endpoint: str, timeout_seconds: int = 180) -> bool:
+    """Ensures that the server is ready by ensure TCP connection
+    AND HTTP readiness
+
+    Args:
+        host (str)
+        port (int)
+        endpoint (str): application endpoint for HTTP readiness
+        timeout_seconds (int): return False if not ready within timeout_seconds
+
+    Returns:
+        bool: True if server is ready
+    """
+
+    # first ensure TCP socket connection
     start_time = time.time()
     while True:
         try:
             with socket.socket() as s:
                 s.settimeout(1)
                 s.connect((host, port))
-                return True
+                break
         except (socket.timeout, ConnectionRefusedError):
+            pass
+        if time.time() - start_time >= timeout_seconds:
+            return False
+        time.sleep(0.5)
+
+    # then ensure HTTP readiness
+    start_time = time.time()
+    while True:
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/{endpoint}", timeout=2) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
             pass
         if time.time() - start_time >= timeout_seconds:
             return False
@@ -109,23 +135,9 @@ class VLLMHTTPServerActor:
         proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, preexec_fn=os.setsid)
         self.pid = proc.pid
 
-        # First wait for TCP socket
-        healthy = _wait_for_server(self.host, self.port, timeout_seconds=180)
+        healthy = _server_ready(self.host, self.port, "v1/models")
         if not healthy:
-            raise RuntimeError(f"vLLM server failed to start at {self.host}:{self.port}")
-
-        # Then wait for HTTP readiness on /v1/models
-        start_time = time.time()
-        while True:
-            try:
-                with urllib.request.urlopen(f"http://{self.host}:{self.port}/v1/models", timeout=2) as resp:
-                    if resp.status == 200:
-                        break
-            except Exception:
-                pass
-            if time.time() - start_time >= 180:
-                raise RuntimeError(f"vLLM server HTTP not ready at {self.host}:{self.port}")
-            time.sleep(0.5)
+            raise RuntimeError(f"vLLM server not ready {self.host}:{self.port}")
 
         return f"{self.host}:{self.port}"
 
@@ -208,23 +220,9 @@ class SGLangHTTPServerActor:
         proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
         self.pid = proc.pid
 
-        # Wait for TCP socket to be ready
-        healthy = _wait_for_server(self.host, self.port, timeout_seconds=180)
+        healthy = _server_ready(self.host, self.port, "get_model_info")
         if not healthy:
-            raise RuntimeError(f"SGLang server failed to start at {self.host}:{self.port}")
-
-        # Then wait for HTTP readiness on /get_model_info
-        start_time = time.time()
-        while True:
-            try:
-                with urllib.request.urlopen(f"http://{self.host}:{self.port}/get_model_info", timeout=2) as resp:
-                    if resp.status == 200:
-                        break
-            except Exception:
-                pass
-            if time.time() - start_time >= 180:
-                raise RuntimeError(f"SGLang server HTTP not ready at {self.host}:{self.port}")
-            time.sleep(0.5)
+            raise RuntimeError(f"SGLang server not ready {self.host}:{self.port}")
 
         return f"{self.host}:{self.port}"
 
@@ -293,6 +291,7 @@ def create_colocated_remote_engines(
         pg = placement_group(bundles, strategy="PACK")
         from skyrl_train.utils.utils import get_ray_pg_ready_with_timeout
         from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
+
         get_ray_pg_ready_with_timeout(pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
     else:
         pg = shared_pg
@@ -319,7 +318,6 @@ def create_colocated_remote_engines(
             ).remote()
             server_actors.append(actor)
             bundle_index += 1
-
 
     logger.info("Starting colocated remote inference servers")
     start_refs = []
@@ -361,7 +359,6 @@ def create_colocated_remote_engines(
             )
     urls: list[str] = ray.get(start_refs)
 
-
     logger.info("Creating colocated remote inference engines")
     engines: List[InferenceEngineInterface] = []
     for url, actor in zip(urls, server_actors):
@@ -379,7 +376,6 @@ def create_colocated_remote_engines(
         )
     logger.info("Created colocated remote inference engines")
 
-
     # Put servers to sleep
     if cfg.generator.backend == "vllm":
         sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
@@ -393,6 +389,7 @@ def create_colocated_remote_engines(
             loop = asyncio.get_event_loop()
             loop.run_until_complete(_sleep_all())
     else:
+
         async def _sleep_all_sglang():
             await asyncio.gather(*[engine.sleep() for engine in engines])
 

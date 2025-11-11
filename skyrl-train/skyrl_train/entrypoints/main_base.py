@@ -288,9 +288,6 @@ class BasePPOExp:
     def run(self):
         trainer = self._setup_trainer()
         # Start the training loop
-        for _ in range(100000):
-            a = 10
-        print(3 / 0)
         trainer.train()
 
 
