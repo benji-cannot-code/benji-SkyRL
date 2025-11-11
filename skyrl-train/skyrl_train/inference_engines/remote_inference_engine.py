@@ -201,12 +201,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                         "ipc_handles_b64": ipc_handles_b64,
                     },
                 )
-                # Try JSON; if server returned plain text, coerce to JSON-like error
-                try:
-                    return await resp.json()
-                except Exception:
-                    text = await resp.text()
-                    return {"status": resp.status, "body": text}
+                return await resp.json()
 
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
@@ -228,6 +223,9 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                     },
                 )
                 last_resp = await resp.json()
+                if last_resp.get("status") != "ok":
+                    # short circuit and return last erroring update
+                    return last_resp
             return last_resp
 
     # TODO(tgriggs): Come up with a (more) elegant way to handle text or json responses, and test it and handle errors.

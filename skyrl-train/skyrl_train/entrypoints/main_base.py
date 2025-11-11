@@ -310,13 +310,11 @@ def skyrl_entrypoint(cfg: DictConfig):
                 and cfg.trainer.placement.colocate_all
                 and not cfg.generator.run_engines_locally
             ):
-                count = 0
                 # clean-up colocated HTTP inference servers
-                for engine in exp.inference_engines:
-                    actor = engine.server_actor
-                    ray.get(actor.kill.remote(), timeout=10)
-                    count += 1
-                logger.info(f"Terminated {count} colocated inference server actor(s)")
+                kill_tasks = [engine.server_actor.kill.remote() for engine in exp.inference_engines]
+                if kill_tasks:
+                    ray.get(kill_tasks, timeout=10)
+                logger.info(f"Terminated {len(kill_tasks)} colocated inference server actor(s)")
         finally:
             # Re-raise to propagate the error to the driver
             raise
