@@ -149,89 +149,6 @@ class VLLMHTTPServerActor:
         self.kill()
 
 
-@ray.remote
-class SGLangHTTPServerActor:
-    """Ray actor that spawns an SGLang HTTP server as a subprocess."""
-
-    def __init__(self):
-        self.pid: Optional[int] = None
-        self.host = ray._private.services.get_node_ip_address().strip("[]")
-        self.port: Optional[int] = None
-
-    def start(
-        self,
-        *,
-        model_path: str,
-        tp_size: int,
-        dtype: str = "bfloat16",
-        mem_fraction_static: Optional[float] = 0.8,
-        enable_prefix_caching: bool = True,
-        enable_memory_saver: bool = False,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        quiet: bool = False,
-    ) -> str:
-        self.port = port or _get_free_port()
-        if host:
-            self.host = host
-
-        # Build SGLang server CLI
-        # We call our thin wrapper which ensures skip-tokenizer-init.
-        cmd = [
-            "python",
-            "-m",
-            "skyrl_train.inference_engines.sglang.sglang_server",
-            "--model-path",
-            model_path,
-            "--tp-size",
-            str(tp_size),
-            "--dtype",
-            dtype,
-            "--host",
-            "0.0.0.0",
-            "--port",
-            str(self.port),
-            "--mem-fraction-static",
-            str(mem_fraction_static or 0.8),
-            # Performance-related defaults mirroring local SGLang init
-            "--attention-backend",
-            "fa3",
-            "--mm-attention-backend",
-            "fa3",
-        ]
-
-        if not enable_prefix_caching:
-            cmd.append("--disable-radix-cache")
-        if enable_memory_saver:
-            cmd.append("--enable-memory-saver")
-
-        # Set CUDA_VISIBLE_DEVICES based on Ray's GPU allocation for this actor
-        gpu_ids = ray.get_gpu_ids()
-        if gpu_ids:
-            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
-
-        # Launch server
-        stdout = subprocess.DEVNULL if quiet else None
-        stderr = subprocess.DEVNULL if quiet else None
-        proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
-        self.pid = proc.pid
-
-        healthy = _server_ready(self.host, self.port, "get_model_info")
-        if not healthy:
-            raise RuntimeError(f"SGLang server not ready {self.host}:{self.port}")
-
-        return f"{self.host}:{self.port}"
-
-    def kill(self):
-        if self.pid is None:
-            return
-        try:
-            os.kill(self.pid, 15)
-            time.sleep(2)
-        except ProcessLookupError:
-            pass
-
-
 class ColocatedRemoteEngine(RemoteInferenceEngine):
     """RemoteInferenceEngine that retains a reference to its Ray server actor."""
 
@@ -306,7 +223,7 @@ def create_colocated_remote_engines(
             # Otherwise, we created bundles sized to TP.
             num_gpus_for_actor = 0.2 if use_shared_pg else tensor_parallel_size
             num_cpus_for_actor = 0.2 if use_shared_pg else 1
-            actor_class = VLLMHTTPServerActor if cfg.generator.backend == "vllm" else SGLangHTTPServerActor
+            actor_class = VLLMHTTPServerActor
             actor = actor_class.options(
                 num_cpus=num_cpus_for_actor,
                 num_gpus=num_gpus_for_actor,
@@ -315,45 +232,26 @@ def create_colocated_remote_engines(
             server_actors.append(actor)
             bundle_index += 1
 
+    # start servers
     start_refs = []
-    effective_mu = cfg.generator.gpu_memory_utilization
     for actor in server_actors:
-        if cfg.generator.backend == "vllm":
-            start_refs.append(
-                actor.start.remote(
-                    model_path=cfg.trainer.policy.model.path,
-                    tensor_parallel_size=tensor_parallel_size,
-                    gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
-                    enforce_eager=cfg.generator.enforce_eager,
-                    enable_prefix_caching=cfg.generator.enable_prefix_caching,
-                    dtype=cfg.generator.model_dtype,
-                    distributed_executor_backend="mp" if tensor_parallel_size > 1 else "uni",
-                    host=None,
-                    port=None,
-                    quiet=False,
-                )
+        start_refs.append(
+            actor.start.remote(
+                model_path=cfg.trainer.policy.model.path,
+                tensor_parallel_size=tensor_parallel_size,
+                gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
+                enforce_eager=cfg.generator.enforce_eager,
+                enable_prefix_caching=cfg.generator.enable_prefix_caching,
+                dtype=cfg.generator.model_dtype,
+                distributed_executor_backend="mp" if tensor_parallel_size > 1 else "uni",
+                host=None,
+                port=None,
+                quiet=False,
             )
-        else:
-            # SGLang: use our custom wrapper module to expose CUDA IPC endpoint
-            if tensor_parallel_size != 1:
-                # SGLang HTTP server only supports TP=1 in our setup
-                raise ValueError("SGLang colocated HTTP servers currently require tensor_parallel_size == 1")
-            start_refs.append(
-                actor.start.remote(
-                    model_path=cfg.trainer.policy.model.path,
-                    tp_size=tensor_parallel_size,
-                    dtype=cfg.generator.model_dtype,
-                    mem_fraction_static=effective_mu,
-                    enable_prefix_caching=cfg.generator.enable_prefix_caching,
-                    # Enable memory saver to allow sleep() to release GPU memory
-                    enable_memory_saver=True,
-                    host=None,
-                    port=None,
-                    quiet=False,
-                )
-            )
+        )
     urls: list[str] = ray.get(start_refs)
 
+    # create inference engines
     engines: List[InferenceEngineInterface] = []
     for url, actor in zip(urls, server_actors):
         engines.append(
@@ -370,26 +268,13 @@ def create_colocated_remote_engines(
         )
 
     # Put servers to sleep
-    if cfg.generator.backend == "vllm":
-        sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
-
-        async def _sleep_all():
-            await asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines])
-
-        try:
-            asyncio.run(_sleep_all())
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(_sleep_all())
-    else:
-
-        async def _sleep_all_sglang():
-            await asyncio.gather(*[engine.sleep() for engine in engines])
-
-        try:
-            asyncio.run(_sleep_all_sglang())
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(_sleep_all_sglang())
+    sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
+    async def _sleep_all():
+        await asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines])
+    try:
+        asyncio.run(_sleep_all())
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(_sleep_all())
 
     return engines

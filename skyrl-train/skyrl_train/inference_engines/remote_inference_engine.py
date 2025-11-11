@@ -145,26 +145,14 @@ class RemoteInferenceEngine(InferenceEngineInterface):
 
     async def wake_up(self, *args: Any, **kwargs: Any):
         async with aiohttp.ClientSession() as session:
-            if self.engine_backend == "vllm":
-                resp = await session.post(f"{self.url}/wake_up", json={"tags": kwargs.get("tags", None)})
-            elif self.engine_backend == "sglang":
-                resp = await session.post(
-                    f"{self.url}/resume_memory_occupation", json={"tags": kwargs.get("tags", None)}
-                )
-            else:
-                raise ValueError(f"Invalid engine backend: {self.engine_backend}")
+            resp = await session.post(f"{self.url}/wake_up", json={"tags": kwargs.get("tags", 1)})
             return await resp.json()
 
     async def sleep(self, *args: Any, **kwargs: Any):
         async with aiohttp.ClientSession() as session:
-            if self.engine_backend == "vllm":
-                resp = await session.post(f"{self.url}/sleep", json={"level": kwargs.get("level", 1)})
-            elif self.engine_backend == "sglang":
-                resp = await session.post(
-                    f"{self.url}/release_memory_occupation", json={"tags": kwargs.get("tags", None)}
-                )
-            else:
-                raise ValueError(f"Invalid engine backend: {self.engine_backend}")
+            # TODO(Charlie): this is vLLM's API, not SGLang (which uses tags). Fix when need to
+            # support sleeping with remote engines.
+            resp = await session.post(f"{self.url}/sleep", json={"level": kwargs.get("level", 1)})
             return await resp.json()
 
     async def init_weight_update_communicator(
@@ -191,15 +179,11 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 return await response.json()
 
     async def update_named_weights(self, request: NamedWeightsUpdateRequest):
-
-        print("Updating named weights...")
-
         if "names" not in request:
             raise ValueError(f"Expected update weight request with 'names' entry, got keys: {request.keys()}")
 
-        # CUDA IPC over HTTP (supported for colocated vLLM and SGLang servers)
         is_ipc = request.get("extras") and "ipc_handles" in request["extras"][0]
-        if is_ipc and self.engine_backend == "vllm":
+        if is_ipc:
             names = request["names"]
             dtypes = request["dtypes"]
             shapes = request["shapes"]
@@ -207,7 +191,6 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii")  # bytes
                 for extra in request["extras"]
             ]
-
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(
                     f"{self.url}/update_weights_cuda_ipc",
@@ -224,28 +207,6 @@ class RemoteInferenceEngine(InferenceEngineInterface):
                 except Exception:
                     text = await resp.text()
                     return {"status": resp.status, "body": text}
-        elif is_ipc and self.engine_backend == "sglang":
-            # New custom endpoint implemented by our SGLang wrapper to handle CUDA IPC directly.
-            names = request["names"]
-            dtypes = request["dtypes"]
-            shapes = request["shapes"]
-            ipc_handles_b64 = [
-                base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii") for extra in request["extras"]
-            ]
-
-            async with aiohttp.ClientSession() as session:
-                resp = await session.post(
-                    f"{self.url}/update_weights_cuda_ipc",
-                    json={
-                        "names": names,
-                        "dtypes": dtypes,
-                        "shapes": shapes,
-                        "ipc_handles_b64": ipc_handles_b64,
-                    },
-                )
-                return await resp.json()
-        elif is_ipc:
-            raise ValueError("CUDA IPC over HTTP is only supported for vLLM or SGLang backends in colocated mode.")
 
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
