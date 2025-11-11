@@ -6,7 +6,7 @@ from skyrl_train.inference_engines.base import (
 )
 from skyrl_train.inference_engines.remote_inference_engine import RemoteInferenceEngine
 
-from typing import List, Optional
+from typing import Any, List, Optional
 import asyncio
 import os
 import socket
@@ -16,6 +16,7 @@ import urllib.request
 import signal
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
+from loguru import logger
 
 
 def _get_free_port() -> int:
@@ -25,6 +26,7 @@ def _get_free_port() -> int:
 
 
 def _wait_for_server(host: str, port: int, timeout_seconds: int = 180) -> bool:
+    """Ensure that server is running"""
     start_time = time.time()
     while True:
         try:
@@ -79,13 +81,16 @@ class VLLMHTTPServerActor:
             dtype,
             "--trust-remote-code",
             "--gpu-memory-utilization",
-            str(gpu_memory_utilization or 0.9),
+            str(gpu_memory_utilization),
             "--host",
             "0.0.0.0",
             "--port",
             str(self.port),
             "--worker-extension-cls",
             "skyrl_train.inference_engines.vllm.vllm_engine.WorkerWrap",
+            "--enable-sleep-mode",
+            "--distributed-executor-backend",
+            distributed_executor_backend,
         ]
 
         if enforce_eager:
@@ -93,24 +98,15 @@ class VLLMHTTPServerActor:
         if enable_prefix_caching:
             cmd.append("--enable-prefix-caching")
 
-        # For multi-GPU servers, prefer mp backend when launched as a single actor
-        # so vLLM uses local CUDA_VISIBLE_DEVICES. For TP=1, this is also fine.
-        cmd += ["--distributed-executor-backend", distributed_executor_backend]
-
-        # Enable sleep mode when supported; useful for colocation
-        cmd.append("--enable-sleep-mode")
-
         # Set CUDA_VISIBLE_DEVICES based on Ray's GPU allocation for this actor
         gpu_ids = ray.get_gpu_ids()
-        if gpu_ids:
-            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
 
         # Launch server
         stdout = subprocess.DEVNULL if quiet else None
         stderr = subprocess.DEVNULL if quiet else None
-        # Put subprocess in its own process group so we can kill only the vLLM tree
+        # Put subprocess in its own process group so we can kill the entire vLLM process tree
         proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, preexec_fn=os.setsid)
-
         self.pid = proc.pid
 
         # First wait for TCP socket
@@ -133,36 +129,13 @@ class VLLMHTTPServerActor:
 
         return f"{self.host}:{self.port}"
 
-    def kill(self, timeout_seconds: int = 20):
-        pid = self.pid
-        if pid is None:
-            return
+    def kill(self):
         # Kill only the vLLM subprocess group (created via setsid in start())
         try:
-            pgid = os.getpgid(pid)
-        except ProcessLookupError:
-            self.pid = None
-            return
-        try:
+            pgid = os.getpgid(self.pid)
             os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            self.pid = None
-            return
-        # # Wait up to timeout for clean exit
-        # deadline = time.time() + timeout_seconds
-        # while time.time() < deadline:
-        #     try:
-        #         os.kill(pid, 0)
-        #         time.sleep(0.5)
-        #     except ProcessLookupError:
-        #         self.pid = None
-        #         return
-        # # Force kill if still alive
-        # try:
-        #     os.killpg(pgid, signal.SIGKILL)
-        # except ProcessLookupError:
-        #     pass
-        self.pid = None
+            logger.error(f"Killing failed: cannot find vLLM server PID {self.pid}")
 
     def __ray_shutdown__(self):
         self.kill()
@@ -303,8 +276,7 @@ def create_colocated_remote_engines(
     cfg: DictConfig, tokenizer: PreTrainedTokenizerBase, shared_pg: PlacementGroup
 ) -> List[InferenceEngineInterface]:
     """
-    Launches remote HTTP inference engines in the same placement group as
-    the trainer actors.
+    Launches remote inference servers in ray actors
     """
     assert cfg.trainer.placement.colocate_all, "colocate_all flag must be true for creating colocated remote engines"
     assert shared_pg is not None, "Must have valid placement group for colocated training"
@@ -313,34 +285,29 @@ def create_colocated_remote_engines(
     tensor_parallel_size = cfg.generator.inference_engine_tensor_parallel_size
     data_parallel_size = cfg.generator.inference_engine_data_parallel_size
 
-    # Prefer shared_pg if provided and TP==1 so we can truly colocate with training.
-    use_shared_pg = shared_pg is not None and tensor_parallel_size == 1
+    use_shared_pg = tensor_parallel_size == 1
     if not use_shared_pg:
-        # Create a dedicated placement group for servers; each bundle reserves TP GPUs
+        # Create a big placement group to ensure that all inference engines are packed
         total_servers = num_inference_engines * data_parallel_size
         bundles = [{"GPU": tensor_parallel_size, "CPU": 1} for _ in range(total_servers)]
         pg = placement_group(bundles, strategy="PACK")
         from skyrl_train.utils.utils import get_ray_pg_ready_with_timeout
         from skyrl_train.utils.constants import SKYRL_RAY_PG_TIMEOUT_IN_S
-
         get_ray_pg_ready_with_timeout(pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
     else:
-        print("Using true colocation")
         pg = shared_pg
 
     # Launch one server per DP replica for each engine index
     server_actors = []
-    urls: List[str] = []
-
     bundle_index = 0
-    for i in range(num_inference_engines):
+    for _ in range(num_inference_engines):
         for dp_rank in range(data_parallel_size):
             sched = PlacementGroupSchedulingStrategy(
                 placement_group=pg,
                 placement_group_capture_child_tasks=True,
                 placement_group_bundle_index=bundle_index,
             )
-            # If using the shared PG (TP==1), reserve fractional GPU/CPU to colocate with trainers.
+            # If using the shared PG (TP == 1), reserve fractional GPU/CPU to colocate with trainers.
             # Otherwise, we created bundles sized to TP.
             num_gpus_for_actor = 0.2 if use_shared_pg else tensor_parallel_size
             num_cpus_for_actor = 0.2 if use_shared_pg else 1
@@ -353,22 +320,17 @@ def create_colocated_remote_engines(
             server_actors.append(actor)
             bundle_index += 1
 
-    print("Starting servers...")
 
-    # Start servers
+    logger.info("Starting colocated remote inference servers")
     start_refs = []
-    # Use a conservative GPU memory utilization when colocating on same GPU
     effective_mu = cfg.generator.gpu_memory_utilization
-    # if use_shared_pg:
-    #     effective_mu = 0.3 if effective_mu is None else min(effective_mu, 0.3)
-
-    for actor_idx, actor in enumerate(server_actors):
+    for actor in server_actors:
         if cfg.generator.backend == "vllm":
             start_refs.append(
                 actor.start.remote(
                     model_path=cfg.trainer.policy.model.path,
                     tensor_parallel_size=tensor_parallel_size,
-                    gpu_memory_utilization=effective_mu,
+                    gpu_memory_utilization=cfg.generator.gpu_memory_utilization,
                     enforce_eager=cfg.generator.enforce_eager,
                     enable_prefix_caching=cfg.generator.enable_prefix_caching,
                     dtype=cfg.generator.model_dtype,
@@ -397,12 +359,10 @@ def create_colocated_remote_engines(
                     quiet=False,
                 )
             )
+    urls: list[str] = ray.get(start_refs)
 
-    urls = ray.get(start_refs)
 
-    print("Creating inference engines...")
-
-    # Create RemoteInferenceEngine clients with attached server actors to preserve lifetime
+    logger.info("Creating colocated remote inference engines")
     engines: List[InferenceEngineInterface] = []
     for url, actor in zip(urls, server_actors):
         engines.append(
@@ -417,12 +377,11 @@ def create_colocated_remote_engines(
                 ep_size=cfg.generator.inference_engine_expert_parallel_size,
             )
         )
+    logger.info("Created colocated remote inference engines")
 
-    # Put servers to sleep initially to free memory until generation.
-    # NOTE: For SGLang, avoid pre-sleep right after startup; it may interfere with its warmup
-    # and cause a crash. We'll only pre-sleep vLLM here.
+
+    # Put servers to sleep
     if cfg.generator.backend == "vllm":
-        print("Sleeping...")
         sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
 
         async def _sleep_all():
@@ -434,7 +393,6 @@ def create_colocated_remote_engines(
             loop = asyncio.get_event_loop()
             loop.run_until_complete(_sleep_all())
     else:
-        print("Sleeping sglang...")
         async def _sleep_all_sglang():
             await asyncio.gather(*[engine.sleep() for engine in engines])
 
@@ -443,6 +401,5 @@ def create_colocated_remote_engines(
         except RuntimeError:
             loop = asyncio.get_event_loop()
             loop.run_until_complete(_sleep_all_sglang())
-
 
     return engines

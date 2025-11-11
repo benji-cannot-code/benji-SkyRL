@@ -268,13 +268,8 @@ class BasePPOExp:
             else:
                 inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
         self.inference_engines = inference_engines
-        print("Obtained engines. Creating client...")
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
-
-        print("Creating generator...")
         generator: GeneratorInterface = self.get_generator(self.cfg, tokenizer, inference_engine_client)
-
-        print("Getting trainer...")
         trainer = self.get_trainer(
             cfg=self.cfg,
             tracker=tracker,
@@ -287,14 +282,15 @@ class BasePPOExp:
         )
 
         # Build the models
-        print("Building models")
         trainer.build_models(PolicyWorker, CriticWorker, RefWorker)
         return trainer
 
     def run(self):
         trainer = self._setup_trainer()
         # Start the training loop
-        print("Starting training")
+        for _ in range(100000):
+            a = 10
+        print(3 / 0)
         trainer.train()
 
 
@@ -304,10 +300,11 @@ def skyrl_entrypoint(cfg: DictConfig):
     exp = BasePPOExp(cfg)
     try:
         exp.run()
-    except KeyboardInterrupt:
+    except BaseException:
         # TODO(benji): sometimes logging from here is not displayed
-        logger.info("Main base entry point received keyboard interrupt. Performing clean-up")
+        logger.info("Main base entry point received exception. Performing clean-up")
         try:
+
             if (
                 exp.inference_engines is not None
                 and cfg.trainer.placement.colocate_all
@@ -325,7 +322,6 @@ def skyrl_entrypoint(cfg: DictConfig):
             raise
 
 
-
 @hydra.main(config_path=config_dir, config_name="ppo_base_config", version_base=None)
 def main(cfg: DictConfig) -> None:
     # validate the arguments
@@ -334,10 +330,10 @@ def main(cfg: DictConfig) -> None:
     entry_ref = skyrl_entrypoint.remote(cfg)
     try:
         ray.get(entry_ref)
-    except KeyboardInterrupt:
-        logger.info("Driver process received KeyboardInterrupt. Forwarding this to entry point")
+    except BaseException as e:
+        logger.info(f"Driver process errored. Forwarding this to entry point. \n{e}")
         ray.cancel(entry_ref, force=False)
-        ray.wait([entry_ref], timeout=10) # wait for clean-up to finish
+        ray.wait([entry_ref], timeout=10)  # wait for clean-up to finish
     finally:
         ray.shutdown()
 
