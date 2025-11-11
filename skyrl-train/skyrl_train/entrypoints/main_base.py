@@ -264,7 +264,9 @@ class BasePPOExp:
         else:
             # When colocating with HTTP engines, spin servers inside Ray and point clients to them
             if self.cfg.trainer.placement.colocate_all:
-                assert self.cfg.generator.backend == 'vllm', "colocated training with remote engines only supported for vllm for now"
+                assert (
+                    self.cfg.generator.backend == "vllm"
+                ), "colocated training with remote engines only supported for vllm for now"
                 inference_engines = create_colocated_remote_engines(self.cfg, tokenizer, self.colocate_pg)
             else:
                 inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
