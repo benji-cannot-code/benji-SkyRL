@@ -16,7 +16,6 @@ import urllib.request
 import signal
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
-from loguru import logger
 
 
 def _get_free_port() -> int:
@@ -143,11 +142,8 @@ class VLLMHTTPServerActor:
 
     def kill(self):
         # Kill only the vLLM subprocess group (created via setsid in start())
-        try:
-            pgid = os.getpgid(self.pid)
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            logger.error(f"Killing failed: cannot find vLLM server PID {self.pid}")
+        pgid = os.getpgid(self.pid)
+        os.killpg(pgid, signal.SIGTERM)
 
     def __ray_shutdown__(self):
         self.kill()
@@ -319,7 +315,6 @@ def create_colocated_remote_engines(
             server_actors.append(actor)
             bundle_index += 1
 
-    logger.info("Starting colocated remote inference servers")
     start_refs = []
     effective_mu = cfg.generator.gpu_memory_utilization
     for actor in server_actors:
@@ -359,7 +354,6 @@ def create_colocated_remote_engines(
             )
     urls: list[str] = ray.get(start_refs)
 
-    logger.info("Creating colocated remote inference engines")
     engines: List[InferenceEngineInterface] = []
     for url, actor in zip(urls, server_actors):
         engines.append(
@@ -374,7 +368,6 @@ def create_colocated_remote_engines(
                 ep_size=cfg.generator.inference_engine_expert_parallel_size,
             )
         )
-    logger.info("Created colocated remote inference engines")
 
     # Put servers to sleep
     if cfg.generator.backend == "vllm":
