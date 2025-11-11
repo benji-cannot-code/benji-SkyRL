@@ -10,6 +10,7 @@ from skyrl_train.utils import validate_cfg
 
 from skyrl_train.trainer import RayPPOTrainer
 from skyrl_train.inference_engines.inference_engine_client import InferenceEngineClient
+from skyrl_train.inference_engines.base import InferenceEngineInterface
 from skyrl_train.inference_engines.remote_inference_engine import create_remote_inference_engines
 from skyrl_train.inference_engines.colocated_remote_engine import create_colocated_remote_engines
 from skyrl_train.utils.utils import initialize_ray, get_ray_pg_ready_with_timeout
@@ -95,6 +96,7 @@ class BasePPOExp:
         self.train_dataset = self.get_train_dataset()
         self.eval_dataset = self.get_eval_dataset()
         self.colocate_pg = self.get_colocate_pg()
+        self.inference_engines: list[InferenceEngineInterface] | None = None
 
     @staticmethod
     def get_cfg_as_str(dict_cfg: DictConfig) -> str:
@@ -265,7 +267,7 @@ class BasePPOExp:
                 inference_engines = create_colocated_remote_engines(self.cfg, tokenizer, self.colocate_pg)
             else:
                 inference_engines = create_remote_inference_engines_from_config(self.cfg, tokenizer)
-
+        self.inference_engines = inference_engines
         print("Obtained engines. Creating client...")
         inference_engine_client = InferenceEngineClient(inference_engines, tokenizer, self.cfg)
 
@@ -300,16 +302,44 @@ class BasePPOExp:
 def skyrl_entrypoint(cfg: DictConfig):
     # make sure that the training loop is not run on the head node.
     exp = BasePPOExp(cfg)
-    exp.run()
+    try:
+        exp.run()
+    except KeyboardInterrupt:
+        # TODO(benji): sometimes logging from here is not displayed
+        logger.info("Main base entry point received keyboard interrupt. Performing clean-up")
+        try:
+            if (
+                exp.inference_engines is not None
+                and cfg.trainer.placement.colocate_all
+                and not cfg.generator.run_engines_locally
+            ):
+                count = 0
+                # clean-up colocated HTTP inference servers
+                for engine in exp.inference_engines:
+                    actor = engine.server_actor
+                    ray.get(actor.kill.remote(), timeout=10)
+                    count += 1
+                logger.info(f"Terminated {count} colocated inference server actor(s)")
+        finally:
+            # Re-raise to propagate the error to the driver
+            raise
+
 
 
 @hydra.main(config_path=config_dir, config_name="ppo_base_config", version_base=None)
 def main(cfg: DictConfig) -> None:
     # validate the arguments
     validate_cfg(cfg)
-
     initialize_ray(cfg)
-    ray.get(skyrl_entrypoint.remote(cfg))
+    entry_ref = skyrl_entrypoint.remote(cfg)
+    try:
+        ray.get(entry_ref)
+    except KeyboardInterrupt:
+        logger.info("Driver process received KeyboardInterrupt. Forwarding this to entry point")
+        ray.cancel(entry_ref, force=False)
+        ray.wait([entry_ref], timeout=10) # wait for clean-up to finish
+    finally:
+        ray.shutdown()
 
 
 if __name__ == "__main__":

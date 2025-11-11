@@ -13,6 +13,7 @@ import socket
 import subprocess
 import time
 import urllib.request
+import signal
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
 
@@ -107,7 +108,9 @@ class VLLMHTTPServerActor:
         # Launch server
         stdout = subprocess.DEVNULL if quiet else None
         stderr = subprocess.DEVNULL if quiet else None
-        proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
+        # Put subprocess in its own process group so we can kill only the vLLM tree
+        proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, preexec_fn=os.setsid)
+
         self.pid = proc.pid
 
         # First wait for TCP socket
@@ -130,14 +133,39 @@ class VLLMHTTPServerActor:
 
         return f"{self.host}:{self.port}"
 
-    def kill(self):
-        if self.pid is None:
+    def kill(self, timeout_seconds: int = 20):
+        pid = self.pid
+        if pid is None:
+            return
+        # Kill only the vLLM subprocess group (created via setsid in start())
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            self.pid = None
             return
         try:
-            os.kill(self.pid, 15)
-            time.sleep(2)
+            os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            self.pid = None
+            return
+        # # Wait up to timeout for clean exit
+        # deadline = time.time() + timeout_seconds
+        # while time.time() < deadline:
+        #     try:
+        #         os.kill(pid, 0)
+        #         time.sleep(0.5)
+        #     except ProcessLookupError:
+        #         self.pid = None
+        #         return
+        # # Force kill if still alive
+        # try:
+        #     os.killpg(pgid, signal.SIGKILL)
+        # except ProcessLookupError:
+        #     pass
+        self.pid = None
+
+    def __ray_shutdown__(self):
+        self.kill()
 
 
 @ray.remote
@@ -261,12 +289,12 @@ class ColocatedRemoteEngine(RemoteInferenceEngine):
             dp_size=dp_size,
             ep_size=ep_size,
         )
-        self._server_actor = server_actor
+        self.server_actor = server_actor
 
     async def teardown(self):
         await super().teardown()
         try:
-            await self._server_actor.kill.remote()
+            await self.server_actor.kill.remote()
         except Exception:
             pass
 
