@@ -344,18 +344,11 @@ class TinkerEngine:
 
         return results, valid_requests
 
-    def find_batchable_forward_backward(self, session: Session) -> dict[str, tuple[str, types.ForwardBackwardInput]]:
-        """Find all forward_backward ops that come before any destructive update for their model.
+    def _find_batchable_gradient_free(
+        self, session: Session, request_type: types.RequestType
+    ) -> dict[str, tuple[str, types.ForwardBackwardInput]]:
+        """Shared helper to find batchable forward-like operations before destructive updates."""
 
-        Uses look-ahead scheduling: for each model, only returns forward_backward operations
-        that have no optim_step or load_weights blocking them in the queue.
-
-        Args:
-            session: Database session
-
-        Returns:
-            Dict mapping request_id to (model_id, request_data) tuples
-        """
         # Find the earliest pending optim_step or load_weights per model (these act as barriers)
         barriers_query = (
             select(FutureDB.model_id, func.min(FutureDB.request_id).label("barrier_id"))
@@ -368,21 +361,31 @@ class TinkerEngine:
         )
         barriers = dict(session.exec(barriers_query).all())
 
-        # Get all pending forward_backward operations ordered by request_id
-        fwd_bwd_query = (
+        # Get all pending operations of the desired type ordered by request_id
+        pending_query = (
             select(FutureDB)
-            .where(FutureDB.request_type == types.RequestType.FORWARD_BACKWARD)
+            .where(FutureDB.request_type == request_type)
             .where(FutureDB.status == RequestStatus.PENDING)
             .order_by(FutureDB.request_id)
         )
-        fwd_bwd_ops = session.exec(fwd_bwd_query).all()
+        pending_ops = session.exec(pending_query).all()
 
         # Filter: only include ops that come before their model's barrier
-        batchable = [op for op in fwd_bwd_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
+        batchable = [op for op in pending_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
 
         return {
             f.request_id: (f.model_id, types.ForwardBackwardInput.model_validate(f.request_data)) for f in batchable
         }
+
+    def find_batchable_forward(self, session: Session) -> dict[str, tuple[str, types.ForwardBackwardInput]]:
+        """Find forward-only operations that can be safely batched."""
+
+        return self._find_batchable_gradient_free(session, types.RequestType.FORWARD)
+
+    def find_batchable_forward_backward(self, session: Session) -> dict[str, tuple[str, types.ForwardBackwardInput]]:
+        """Find all forward_backward ops that come before any destructive update for their model."""
+
+        return self._find_batchable_gradient_free(session, types.RequestType.FORWARD_BACKWARD)
 
     def find_batchable_sample(self, session: Session) -> dict[str, tuple[str, types.SampleInput]]:
         """Find all sample ops that can be safely batched together.
@@ -476,7 +479,21 @@ class TinkerEngine:
     def process_forward_backward_batch(
         self, requests: dict[str, tuple[str, types.ForwardBackwardInput]]
     ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
-        """Process multiple forward_backward requests in a single batch.
+        return self._process_forward_like_batch(requests, accumulate_grads=True)
+
+    def process_forward_batch(
+        self, requests: dict[str, tuple[str, types.ForwardBackwardInput]]
+    ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
+        """Process forward-only requests without accumulating gradients."""
+
+        return self._process_forward_like_batch(requests, accumulate_grads=False)
+
+    def _process_forward_like_batch(
+        self,
+        requests: dict[str, tuple[str, types.ForwardBackwardInput]],
+        accumulate_grads: bool,
+    ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
+        """Process multiple forward-like requests in a single batch.
 
         Args:
             requests: Dict mapping request_id to (model_id, request_data) tuples
@@ -555,7 +572,8 @@ class TinkerEngine:
             )
             token_losses_device.append(per_token_losses)
             logprobs_device.append(target_logprobs)
-            self._accumulate_grads(lora_grads_mb, example_model_ids[mb_start:mb_end])
+            if accumulate_grads:
+                self._accumulate_grads(lora_grads_mb, example_model_ids[mb_start:mb_end])
 
         # Single batched device-to-host transfer for all arrays
         token_losses_host, logprobs_host = jax.device_get((token_losses_device, logprobs_device))
@@ -920,6 +938,8 @@ class TinkerEngine:
         while True:
             # Query for pending requests and extract data within session context
             with Session(self.db_engine) as session:
+                # Look for forward-only requests (used by custom loss flows)
+                forward_requests = self.find_batchable_forward(session)
                 # Use look-ahead scheduling to find batchable forward_backward operations
                 forward_backward_requests = self.find_batchable_forward_backward(session)
                 # Find pending sample requests that can be batched
@@ -928,6 +948,7 @@ class TinkerEngine:
                 other_requests = self.find_single_requests(session)
 
             # Process batches outside of session context
+            self.process_batch_requests(forward_requests, self.process_forward_batch)
             self.process_batch_requests(forward_backward_requests, self.process_forward_backward_batch)
             self.process_batch_requests(sample_requests, self.process_sample_batch)
 
