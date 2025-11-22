@@ -247,6 +247,11 @@ class ForwardBackwardRequest(BaseModel):
     forward_backward_input: ForwardBackwardInput
 
 
+class ForwardRequest(BaseModel):
+    model_id: str
+    forward_input: ForwardBackwardInput
+
+
 class AdamParams(BaseModel):
     learning_rate: float = Field(default=1e-4, ge=0.0)
     beta1: float = Field(default=0.9, ge=0.0, lt=1.0)
@@ -554,6 +559,23 @@ async def forward_backward(request: ForwardBackwardRequest, session: AsyncSessio
         request_type=types.RequestType.FORWARD_BACKWARD,
         model_id=request.model_id,
         request_data=request.forward_backward_input.to_types(),
+    )
+
+    await session.commit()
+
+    return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
+
+
+@app.post("/api/v1/forward", response_model=FutureResponse)
+async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_session)):
+    """Run a forward pass and return token-level logprobs."""
+    await get_model(session, request.model_id)
+
+    request_id = await create_future(
+        session=session,
+        request_type=types.RequestType.FORWARD,
+        model_id=request.model_id,
+        request_data=request.forward_input.to_types(),
     )
 
     await session.commit()
@@ -874,7 +896,7 @@ async def root():
         "version": "0.0.1",
         "endpoints": {
             "models": ["/api/v1/create_model", "/api/v1/get_info", "/api/v1/training_runs/{model_id}"],
-            "training": ["/api/v1/forward_backward", "/api/v1/optim_step"],
+            "training": ["/api/v1/forward", "/api/v1/forward_backward", "/api/v1/optim_step"],
             "futures": ["/api/v1/retrieve_future"],
             "service": ["/api/v1/get_server_capabilities"],
             "telemetry": ["/api/v1/telemetry"],
