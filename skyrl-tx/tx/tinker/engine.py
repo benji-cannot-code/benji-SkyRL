@@ -513,7 +513,7 @@ class TinkerEngine:
             select(FutureDB)
             .where(FutureDB.status == RequestStatus.PENDING)
             .where(FutureDB.request_type != types.RequestType.FORWARD_BACKWARD)
-            .where(FutureDB.request_type != types.RequestType.FORWARD)
+            .where(FutureDB.request_type != types.RequestType.FORWARD_ONLY)
             .where(FutureDB.request_type != types.RequestType.SAMPLE)
             .where(FutureDB.request_type != types.RequestType.EXTERNAL)
             .order_by(FutureDB.request_id)
