@@ -242,9 +242,19 @@ class ForwardBackwardInput(BaseModel):
         return types.ForwardBackwardInput(data=[datum.to_types() for datum in self.data], loss_fn=self.loss_fn)
 
 
+class ForwardInput(ForwardBackwardInput):
+    def to_types(self) -> types.ForwardInput:
+        return types.ForwardInput(data=[datum.to_types() for datum in self.data], loss_fn=self.loss_fn)
+
+
 class ForwardBackwardRequest(BaseModel):
     model_id: str
     forward_backward_input: ForwardBackwardInput
+
+
+class ForwardRequest(BaseModel):
+    model_id: str
+    forward_input: ForwardInput
 
 
 class AdamParams(BaseModel):
@@ -554,6 +564,23 @@ async def forward_backward(request: ForwardBackwardRequest, session: AsyncSessio
         request_type=types.RequestType.FORWARD_BACKWARD,
         model_id=request.model_id,
         request_data=request.forward_backward_input.to_types(),
+    )
+
+    await session.commit()
+
+    return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
+
+
+@app.post("/api/v1/forward", response_model=FutureResponse)
+async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_session)):
+    """Compute forward pass and return loss function outputs."""
+    await get_model(session, request.model_id)
+
+    request_id = await create_future(
+        session=session,
+        request_type=types.RequestType.FORWARD,
+        model_id=request.model_id,
+        request_data=request.forward_input.to_types(),
     )
 
     await session.commit()
@@ -874,7 +901,7 @@ async def root():
         "version": "0.0.1",
         "endpoints": {
             "models": ["/api/v1/create_model", "/api/v1/get_info", "/api/v1/training_runs/{model_id}"],
-            "training": ["/api/v1/forward_backward", "/api/v1/optim_step"],
+            "training": ["/api/v1/forward", "/api/v1/forward_backward", "/api/v1/optim_step"],
             "futures": ["/api/v1/retrieve_future"],
             "service": ["/api/v1/get_server_capabilities"],
             "telemetry": ["/api/v1/telemetry"],
