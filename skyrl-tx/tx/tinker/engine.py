@@ -465,9 +465,7 @@ class TinkerEngine:
         # Filter: only include ops that come before their model's barrier
         batchable = [op for op in fw_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
 
-        return {
-            f.request_id: (f.model_id, types.ForwardInput.model_validate(f.request_data)) for f in batchable
-        }
+        return {f.request_id: (f.model_id, types.ForwardInput.model_validate(f.request_data)) for f in batchable}
 
     def find_batchable_sample(self, session: Session) -> dict[str, tuple[str, types.SampleInput]]:
         """Find all sample ops that can be safely batched together.
