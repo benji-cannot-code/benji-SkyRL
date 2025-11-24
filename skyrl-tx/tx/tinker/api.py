@@ -10,6 +10,7 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import TimeoutError as SA_TimeoutError
 import asyncio
 import subprocess
 import random
@@ -759,26 +760,32 @@ class RetrieveFutureRequest(BaseModel):
 async def retrieve_future(request: RetrieveFutureRequest, req: Request):
     """Retrieve the result of an async operation, waiting until it's available."""
     timeout = 300  # 5 minutes
-    poll_interval = 0.1  # 100ms
+    poll_interval = 0.2  # 200ms
 
     for _ in range(int(timeout / poll_interval)):
-        async with AsyncSession(req.app.state.db_engine) as session:
-            statement = select(FutureDB).where(FutureDB.request_id == int(request.request_id))
-            result = await session.exec(statement)
-            future = result.first()
+        try:
+            async with AsyncSession(req.app.state.db_engine) as session:
+                statement = select(FutureDB).where(FutureDB.request_id == int(request.request_id))
+                result = await session.exec(statement)
+                future = result.first()
 
-            if not future:
-                raise HTTPException(status_code=404, detail="Future not found")
+                if not future:
+                    raise HTTPException(status_code=404, detail="Future not found")
 
-            if future.status == RequestStatus.COMPLETED:
-                return future.result_data
+                if future.status == RequestStatus.COMPLETED:
+                    return future.result_data
 
-            if future.status == RequestStatus.FAILED:
-                # Return 400 for handled errors (validation, etc.), 500 for unexpected failures
-                if future.result_data and "error" in future.result_data:
-                    raise HTTPException(status_code=400, detail=future.result_data["error"])
-                else:
-                    raise HTTPException(status_code=500, detail="Unknown error")
+                if future.status == RequestStatus.FAILED:
+                    # Return 400 for handled errors (validation, etc.), 500 for unexpected failures
+                    if future.result_data and "error" in future.result_data:
+                        raise HTTPException(status_code=400, detail=future.result_data["error"])
+                    else:
+                        raise HTTPException(status_code=500, detail="Unknown error")
+        except SA_TimeoutError:
+            # Connection pool saturated; back off and retry
+            logger.info(f"DB timeout. Sleeping for {poll_interval}")
+            await asyncio.sleep(poll_interval)
+            continue
 
         await asyncio.sleep(poll_interval)
 
