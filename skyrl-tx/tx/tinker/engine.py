@@ -441,6 +441,15 @@ class TinkerEngine:
         }
 
     def find_batchable_forward(self, session: Session) -> dict[str, tuple[str, types.ForwardInput]]:
+        """Find all forward_backward ops that come before any destructive update for their model.
+
+        Args:
+            session (Session): db session
+
+        Returns:
+            dict[str, tuple[str, types.ForwardInput]]:
+                Dict mapping request_id to (model_id, request_data) tuples
+        """
         # Find the earliest pending optim_step or load_weights per model (these act as barriers)
         barriers_query = (
             select(FutureDB.model_id, func.min(FutureDB.request_id).label("barrier_id"))
@@ -694,7 +703,7 @@ class TinkerEngine:
             requests: Dict mapping request_id to (model_id, request_data) tuples
 
         Returns:
-            Dict mapping request_id -> result_data or error info
+            Dict mapping request_id to result_data or error info
         """
         results, valid_requests = self._filter_valid_requests(requests)
 
