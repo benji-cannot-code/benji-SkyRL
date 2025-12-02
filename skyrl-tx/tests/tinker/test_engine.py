@@ -254,6 +254,9 @@ def test_gradient_checkpointing():
     """
     losses = []
     for use_gradient_checkpointing in (False, True):
+        # Clear JAX caches to avoid trace context issues when creating multiple engines
+        jax.clear_caches()
+
         cfg = EngineConfig(
             base_model=BASE_MODEL,
             enforce_eager=False,
