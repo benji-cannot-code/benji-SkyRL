@@ -252,14 +252,8 @@ def test_gradient_checkpointing():
     """
     Verify gradient checkpointing doesn't affect loss values.
     """
-    from tx.utils.models import extract_adapter_state, insert_adapter_state
-
     losses = []
     for use_gradient_checkpointing in (False, True):
-        # Clear the nnx.jit caches for adapter state functions
-        extract_adapter_state.jitted_fn.clear_cache()
-        insert_adapter_state.jitted_fn.clear_cache()
-
         cfg = EngineConfig(
             base_model=BASE_MODEL,
             enforce_eager=False,
