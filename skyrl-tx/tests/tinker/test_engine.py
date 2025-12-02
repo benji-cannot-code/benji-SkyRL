@@ -252,10 +252,13 @@ def test_gradient_checkpointing():
     """
     Verify gradient checkpointing doesn't affect loss values.
     """
+    from flax.nnx import graph as nnx_graph
+
     losses = []
     for use_gradient_checkpointing in (False, True):
-        # Clear JAX caches to avoid trace context issues when creating multiple engines
+        # Clear JAX caches and reset NNX graph context to avoid trace context issues
         jax.clear_caches()
+        nnx_graph.GRAPH_CONTEXT.__init__()
 
         cfg = EngineConfig(
             base_model=BASE_MODEL,
