@@ -46,6 +46,18 @@ def pad(xs, pad_to: int, *, fill):
     return xs + ([fill] * (pad_to - len(xs)))
 
 
+def _model_forward(
+    model: nnx.Module, input_ids: jax.Array, attention_mask: jax.Array, adapter_indices: jax.Array
+) -> jax.Array:
+    """Helper function for model forward pass, defined at module level to avoid closure capture."""
+    output = model(input_ids, attention_mask=attention_mask, adapter_indices=adapter_indices)
+    return output.logits
+
+
+# Create a remat-wrapped version at module level
+_model_forward_remat = nnx.remat(_model_forward)
+
+
 def pad_batch(sequences: list[list], max_length: int, dtype) -> jax.Array:
     """Pad a batch of sequences to max_length."""
     batch_size = len(sequences)
@@ -183,14 +195,8 @@ class TinkerEngine:
     def _create_loss_and_grad_fn(self):
         """Compile and cache the loss function to avoid re-jitting on every call."""
 
-        # Helper function for model forward pass
-        def _model_forward(
-            model: nnx.Module, input_ids: jax.Array, attention_mask: jax.Array, adapter_indices: jax.Array
-        ) -> jax.Array:
-            output = model(input_ids, attention_mask=attention_mask, adapter_indices=adapter_indices)
-            return output.logits
-
-        use_gradient_checkpointing = self.config.gradient_checkpointing
+        # Select the appropriate forward function based on gradient checkpointing config
+        forward_fn = _model_forward_remat if self.config.gradient_checkpointing else _model_forward
 
         def loss_for_lora(
             lora_params: nnx.State,
@@ -205,8 +211,6 @@ class TinkerEngine:
             advantages: jax.Array,
         ) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
             model = nnx.merge(self.graphdef, lora_params, non_lora_params)
-            # Apply nnx.remat inside the function to avoid caching issues across engine instances
-            forward_fn = nnx.remat(_model_forward) if use_gradient_checkpointing else _model_forward
             logits = forward_fn(model, input_ids, attention_mask, adapter_indices)  # [B, T, V]
 
             logprobs = jax.nn.log_softmax(logits, axis=-1)  # [B, T, V]
