@@ -183,9 +183,7 @@ class TinkerEngine:
     def _create_loss_and_grad_fn(self):
         """Compile and cache the loss function to avoid re-jitting on every call."""
 
-        # Model forward that reconstructs the model from GraphDef + States inside
-        # the function. This ensures nnx.merge happens in the same trace context
-        # as nnx.remat to avoid cross-trace mutation errors.
+        # Wrap the model forward call to use nnx.remat for gradient checkpointing
         def _model_forward(
             graphdef: nnx.GraphDef,
             lora_params: nnx.State,
