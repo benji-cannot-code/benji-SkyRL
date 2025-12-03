@@ -46,18 +46,6 @@ def pad(xs, pad_to: int, *, fill):
     return xs + ([fill] * (pad_to - len(xs)))
 
 
-def _model_forward(
-    model: nnx.Module, input_ids: jax.Array, attention_mask: jax.Array, adapter_indices: jax.Array
-) -> jax.Array:
-    """Helper function for model forward pass, defined at module level to avoid closure capture."""
-    output = model(input_ids, attention_mask=attention_mask, adapter_indices=adapter_indices)
-    return output.logits
-
-
-# Create a remat-wrapped version at module level
-_model_forward_remat = nnx.remat(_model_forward)
-
-
 def pad_batch(sequences: list[list], max_length: int, dtype) -> jax.Array:
     """Pad a batch of sequences to max_length."""
     batch_size = len(sequences)
@@ -195,8 +183,24 @@ class TinkerEngine:
     def _create_loss_and_grad_fn(self):
         """Compile and cache the loss function to avoid re-jitting on every call."""
 
-        # Select the appropriate forward function based on gradient checkpointing config
-        forward_fn = _model_forward_remat if self.config.gradient_checkpointing else _model_forward
+        # Model forward that reconstructs the model from GraphDef + States inside
+        # the function. This ensures nnx.merge happens in the same trace context
+        # as nnx.remat to avoid cross-trace mutation errors.
+        def _model_forward(
+            graphdef: nnx.GraphDef,
+            lora_params: nnx.State,
+            non_lora_params: nnx.State,
+            input_ids: jax.Array,
+            attention_mask: jax.Array,
+            adapter_indices: jax.Array,
+        ) -> jax.Array:
+            model = nnx.merge(graphdef, lora_params, non_lora_params)
+            output = model(input_ids, attention_mask=attention_mask, adapter_indices=adapter_indices)
+            return output.logits
+
+        if self.config.gradient_checkpointing:
+            # policy=None corresponds to full activation recomputation
+            _model_forward = nnx.remat(_model_forward, policy=None)
 
         def loss_for_lora(
             lora_params: nnx.State,
@@ -210,8 +214,9 @@ class TinkerEngine:
             sampling_logprobs: jax.Array,
             advantages: jax.Array,
         ) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
-            model = nnx.merge(self.graphdef, lora_params, non_lora_params)
-            logits = forward_fn(model, input_ids, attention_mask, adapter_indices)  # [B, T, V]
+            logits = _model_forward(
+                self.graphdef, lora_params, non_lora_params, input_ids, attention_mask, adapter_indices
+            )  # [B, T, V]
 
             logprobs = jax.nn.log_softmax(logits, axis=-1)  # [B, T, V]
             target_logprobs = jnp.take_along_axis(logprobs, target_ids[..., None], axis=-1).squeeze(-1)
