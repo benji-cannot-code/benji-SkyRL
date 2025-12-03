@@ -200,7 +200,7 @@ class TinkerEngine:
 
         if self.config.gradient_checkpointing:
             # policy=None corresponds to full activation recomputation
-            _model_forward = nnx.remat(_model_forward, policy=None)
+            _model_forward = jax.checkpoint(_model_forward, policy=None)
 
         def loss_for_lora(
             lora_params: nnx.State,
