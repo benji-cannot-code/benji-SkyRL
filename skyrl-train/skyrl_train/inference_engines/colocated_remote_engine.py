@@ -5,6 +5,7 @@ from skyrl_train.inference_engines.base import (
     InferenceEngineInterface,
 )
 from skyrl_train.inference_engines.remote_inference_engine import RemoteInferenceEngine
+from skyrl_train.distributed.utils import get_free_port
 
 from typing import List, Optional
 import asyncio
@@ -16,12 +17,6 @@ import urllib.request
 import signal
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
-
-
-def _get_free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("", 0))
-        return sock.getsockname()[1]
 
 
 def _server_ready(host: str, port: int, endpoint: str, timeout_seconds: int = 180) -> bool:
@@ -89,7 +84,7 @@ class VLLMHTTPServerActor:
         port: Optional[int] = None,
         quiet: bool = False,
     ) -> str:
-        self.port = port or _get_free_port()
+        self.port = port or get_free_port()
         if host:
             self.host = host
 
