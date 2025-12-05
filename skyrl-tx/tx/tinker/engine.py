@@ -241,12 +241,34 @@ class TinkerEngine:
             # Return sum of losses (we'll divide gradients by per-adapter batch size later)
             return per_seq_loss.sum(), (logits, per_token_losses)
 
+        def forward_only(
+            lora_params: nnx.State,
+            non_lora_params: nnx.State,
+            input_ids: jax.Array,
+            attention_mask: jax.Array,
+            adapter_indices: jax.Array,
+            target_ids: jax.Array,
+            loss_mask: jax.Array,
+            loss_fn_types: jax.Array,
+            sampling_logprobs: jax.Array,
+            advantages: jax.Array,
+        ) -> tuple[jax.Array, jax.Array]:
+            model = nnx.merge(self.graphdef, lora_params, non_lora_params)
+            logits = _model_forward(model, input_ids, attention_mask, adapter_indices)
+            logprobs = jax.nn.log_softmax(logits, axis=-1)
+            target_logprobs = jnp.take_along_axis(logprobs, target_ids[..., None], axis=-1).squeeze(-1)
+            per_token_losses = jax.vmap(compute_loss_per_example)(
+                loss_fn_types, target_logprobs, loss_mask, sampling_logprobs, advantages
+            )
+            return per_token_losses, target_logprobs
+
         # Only differentiate with respect to lora_params (argnums=0)
         loss_and_grad_fn = jax.value_and_grad(loss_for_lora, argnums=0, has_aux=True)
 
         if self.config.enforce_eager:
             # Disable JIT compilation for debugging
             self._loss_and_grad_fn = loss_and_grad_fn
+            self._forward_fn = forward_only
         else:
             # Retrieve the sharding of lora and non_lora params and compute the sharding of inputs and outputs
             lora_shardings = jax.tree.map(
@@ -263,6 +285,12 @@ class TinkerEngine:
                 in_shardings=(lora_shardings, non_lora_shardings) + (replicated,) * 8,
                 # One output sharding parameter for each return value of loss_for_lora
                 out_shardings=((scalar, (replicated, replicated)), lora_shardings),
+            )
+
+            self._forward_fn = jax.jit(
+                forward_only,
+                in_shardings=(lora_shardings, non_lora_shardings) + (replicated,) * 8,
+                out_shardings=(replicated, replicated),
             )
 
     def _micro_batch_size(self, total: int) -> int:
@@ -319,6 +347,34 @@ class TinkerEngine:
         target_logprobs = jnp.take_along_axis(logprobs, target_ids[..., None], axis=-1).squeeze(-1)  # [B, T]
         return per_token_losses, target_logprobs, lora_grads
 
+    def _forward(
+        self,
+        input_ids: jax.Array,
+        attention_mask: jax.Array,
+        adapter_indices: jax.Array,
+        target_ids: jax.Array,
+        loss_mask: jax.Array,
+        loss_fn_types: jax.Array,
+        sampling_logprobs: jax.Array,
+        advantages: jax.Array,
+    ) -> tuple[jax.Array, jax.Array]:
+        """Run a forward-only pass on a batch of inputs."""
+        seq_len = input_ids.shape[1]
+        with jax.set_mesh(self.mesh), self._jit_timing_context(seq_len, mode="train"):
+            per_token_losses, target_logprobs = self._forward_fn(
+                self.lora_params,
+                self.non_lora_params,
+                input_ids,
+                attention_mask,
+                adapter_indices,
+                target_ids,
+                loss_mask,
+                loss_fn_types,
+                sampling_logprobs,
+                advantages,
+            )
+        return per_token_losses, target_logprobs
+
     def _accumulate_grads(self, lora_grads: nnx.State, example_model_ids: list[str]) -> None:
         """
         Accumulate adapter-wise gradient sums and example counts.
@@ -331,7 +387,7 @@ class TinkerEngine:
     def _filter_valid_requests(
         self,
         requests: dict[str, tuple[str, any]],
-    ) -> tuple[dict[str, any], dict[str, tuple[str, any]]]:
+    ) -> tuple[dict[str, any], dict[str, tuple]]:
         """Filter out requests with invalid model_ids and return error results for them.
 
         Args:
@@ -343,18 +399,19 @@ class TinkerEngine:
         results = {}
         valid_requests = {}
 
-        for request_id, (model_id, request_data) in requests.items():
+        for request_id, request_tuple in requests.items():
+            model_id, *rest = request_tuple
             if model_id and model_id not in self.models:
                 results[request_id] = types.ErrorResponse(error=f"Model {model_id} not loaded", status="failed")
             else:
-                valid_requests[request_id] = (model_id, request_data)
+                valid_requests[request_id] = (model_id, *rest)
 
         return results, valid_requests
 
-    def find_batchable_forward_backward(self, session: Session) -> dict[str, tuple[str, types.ForwardBackwardInput]]:
-        """Find all forward_backward ops that come before any destructive update for their model.
+    def find_batchable_forward_backward(self, session: Session) -> dict[str, tuple[str, types.ForwardBackwardInput, types.RequestType]]:
+        """Find all training forward/forward_backward ops that come before any destructive update for their model.
 
-        Uses look-ahead scheduling: for each model, only returns forward_backward operations
+        Uses look-ahead scheduling: for each model, only returns forward/forward_backward operations
         that have no optim_step or load_weights blocking them in the queue.
 
         Args:
@@ -375,10 +432,14 @@ class TinkerEngine:
         )
         barriers = dict(session.exec(barriers_query).all())
 
-        # Get all pending forward_backward operations ordered by request_id
+        # Get all pending forward/forward_backward operations ordered by request_id
         fwd_bwd_query = (
             select(FutureDB)
-            .where(FutureDB.request_type == types.RequestType.FORWARD_BACKWARD)
+            .where(
+                FutureDB.request_type.in_(
+                    [types.RequestType.FORWARD_BACKWARD, types.RequestType.FORWARD]
+                )
+            )
             .where(FutureDB.status == RequestStatus.PENDING)
             .order_by(FutureDB.request_id)
         )
@@ -388,7 +449,12 @@ class TinkerEngine:
         batchable = [op for op in fwd_bwd_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
 
         return {
-            f.request_id: (f.model_id, types.ForwardBackwardInput.model_validate(f.request_data)) for f in batchable
+            f.request_id: (
+                f.model_id,
+                types.ForwardBackwardInput.model_validate(f.request_data),
+                f.request_type,
+            )
+            for f in batchable
         }
 
     def find_batchable_sample(self, session: Session) -> dict[str, tuple[str, types.SampleInput]]:
@@ -435,6 +501,7 @@ class TinkerEngine:
             select(FutureDB)
             .where(FutureDB.status == RequestStatus.PENDING)
             .where(FutureDB.request_type != types.RequestType.FORWARD_BACKWARD)
+            .where(FutureDB.request_type != types.RequestType.FORWARD)
             .where(FutureDB.request_type != types.RequestType.SAMPLE)
             .where(FutureDB.request_type != types.RequestType.EXTERNAL)
             .order_by(FutureDB.request_id)
@@ -481,130 +548,151 @@ class TinkerEngine:
         )
 
     def process_forward_backward_batch(
-        self, requests: dict[str, tuple[str, types.ForwardBackwardInput]]
+        self, requests: dict[str, tuple[str, types.ForwardBackwardInput, types.RequestType]]
     ) -> dict[str, types.ForwardBackwardOutput | types.ErrorResponse]:
-        """Process multiple forward_backward requests in a single batch.
-
-        Args:
-            requests: Dict mapping request_id to (model_id, request_data) tuples
-
-        Returns:
-            Dict mapping request_id -> result_data or error info
-        """
+        """Process multiple forward and forward_backward requests in a single batch."""
         results, valid_requests = self._filter_valid_requests(requests)
 
         if not valid_requests:
             return results
 
-        # Collect all examples and their metadata
-        all_input_ids = []
-        all_targets = []
-        all_token_weights = []
-        all_adapter_indices = []
-        example_model_ids = []  # map each example to its model_id
-        request_batch_slices = []  # Track which examples belong to which request
-        all_sampling_logprobs = []
-        all_advantages = []
-        all_loss_fn_types = []
+        def _run_training_requests(
+            request_subset: dict[str, tuple[str, types.ForwardBackwardInput, types.RequestType]],
+            accumulate_grads: bool,
+        ) -> dict[str, types.ForwardBackwardOutput]:
+            if not request_subset:
+                return {}
 
-        for request_id, (model_id, request_data) in valid_requests.items():
-            adapter_index = self.models[model_id].adapter_index
-            loss_fn_type = LOSS_TYPES[request_data.loss_fn]
+            all_input_ids = []
+            all_targets = []
+            all_token_weights = []
+            all_adapter_indices = []
+            example_model_ids: list[str] = []
+            request_batch_slices = []
+            all_sampling_logprobs = []
+            all_advantages = []
+            all_loss_fn_types = []
 
-            request_start = len(all_input_ids)
-            for item in request_data.data:
-                tokens = [t for chunk in item.model_input.chunks for t in chunk.tokens]
-                all_input_ids.append(tokens)
-                loss_fn_inputs = item.loss_fn_inputs
-                all_targets.append(loss_fn_inputs.target_tokens.data)
-                all_token_weights.append(loss_fn_inputs.weights.data)
-                all_sampling_logprobs.append(loss_fn_inputs.logprobs.data)
-                all_advantages.append(loss_fn_inputs.advantages.data)
-                all_adapter_indices.append(adapter_index)
-                example_model_ids.append(model_id)
-                all_loss_fn_types.append(loss_fn_type)
+            for request_id, (model_id, request_data, _) in request_subset.items():
+                adapter_index = self.models[model_id].adapter_index
+                loss_fn_type = LOSS_TYPES[request_data.loss_fn]
 
-            request_batch_slices.append((request_id, model_id, request_start, len(all_input_ids)))
+                request_start = len(all_input_ids)
+                for item in request_data.data:
+                    tokens = [t for chunk in item.model_input.chunks for t in chunk.tokens]
+                    all_input_ids.append(tokens)
+                    loss_fn_inputs = item.loss_fn_inputs
+                    all_targets.append(loss_fn_inputs.target_tokens.data)
+                    all_token_weights.append(loss_fn_inputs.weights.data)
+                    all_sampling_logprobs.append(loss_fn_inputs.logprobs.data)
+                    all_advantages.append(loss_fn_inputs.advantages.data)
+                    all_adapter_indices.append(adapter_index)
+                    all_loss_fn_types.append(loss_fn_type)
+                    if accumulate_grads:
+                        example_model_ids.append(model_id)
 
-        # Pad sequences to same length. Also bin it so the JIT has to compile fewer kernels.
-        max_len = round_up_seq_len(max(len(seq) for seq in all_input_ids))
+                request_batch_slices.append((request_id, model_id, request_start, len(all_input_ids)))
 
-        input_ids = pad_batch(all_input_ids, max_len, np.int32)
-        target_ids = pad_batch(all_targets, max_len, np.int32)
-        adapter_indices = jnp.array(all_adapter_indices, dtype=jnp.int32)
-        loss_fn_types = jnp.array(all_loss_fn_types, dtype=jnp.int32)
+            # Pad sequences to same length. Also bin it so the JIT has to compile fewer kernels.
+            max_len = round_up_seq_len(max(len(seq) for seq in all_input_ids))
 
-        # Create attention mask (1 for real tokens, 0 for padding)
-        attention_mask = pad_batch([[1] * len(seq) for seq in all_input_ids], max_len, np.int32)
-        loss_mask = pad_batch(all_token_weights, max_len, np.float32)
-        sampling_logprobs = pad_batch(all_sampling_logprobs, max_len, np.float32)
-        advantages = pad_batch(all_advantages, max_len, np.float32)
+            input_ids = pad_batch(all_input_ids, max_len, np.int32)
+            target_ids = pad_batch(all_targets, max_len, np.int32)
+            adapter_indices = jnp.array(all_adapter_indices, dtype=jnp.int32)
+            loss_fn_types = jnp.array(all_loss_fn_types, dtype=jnp.int32)
 
-        total_bs = int(input_ids.shape[0])
-        micro_bs = self._micro_batch_size(total_bs)
-        seq_lens = [len(seq) for seq in all_input_ids]
+            attention_mask = pad_batch([[1] * len(seq) for seq in all_input_ids], max_len, np.int32)
+            loss_mask = pad_batch(all_token_weights, max_len, np.float32)
+            sampling_logprobs = pad_batch(all_sampling_logprobs, max_len, np.float32)
+            advantages = pad_batch(all_advantages, max_len, np.float32)
 
-        # Collect full padded arrays on device, slice after transfer
-        token_losses_device = []
-        logprobs_device = []
+            total_bs = int(input_ids.shape[0])
+            micro_bs = self._micro_batch_size(total_bs)
+            seq_lens = [len(seq) for seq in all_input_ids]
 
-        for mb_start in range(0, total_bs, micro_bs):
-            mb_end = min(mb_start + micro_bs, total_bs)
-            per_token_losses, target_logprobs, lora_grads_mb = self._forward_backward(
-                input_ids[mb_start:mb_end],
-                attention_mask[mb_start:mb_end],
-                adapter_indices[mb_start:mb_end],
-                target_ids[mb_start:mb_end],
-                loss_mask[mb_start:mb_end],
-                loss_fn_types[mb_start:mb_end],
-                sampling_logprobs[mb_start:mb_end],
-                advantages[mb_start:mb_end],
-            )
-            token_losses_device.append(per_token_losses)
-            logprobs_device.append(target_logprobs)
-            self._accumulate_grads(lora_grads_mb, example_model_ids[mb_start:mb_end])
+            token_losses_device = []
+            logprobs_device = []
 
-        # Single batched device-to-host transfer for all arrays
-        token_losses_host, logprobs_host = jax.device_get((token_losses_device, logprobs_device))
+            for mb_start in range(0, total_bs, micro_bs):
+                mb_end = min(mb_start + micro_bs, total_bs)
+                if accumulate_grads:
+                    per_token_losses, target_logprobs, lora_grads_mb = self._forward_backward(
+                        input_ids[mb_start:mb_end],
+                        attention_mask[mb_start:mb_end],
+                        adapter_indices[mb_start:mb_end],
+                        target_ids[mb_start:mb_end],
+                        loss_mask[mb_start:mb_end],
+                        loss_fn_types[mb_start:mb_end],
+                        sampling_logprobs[mb_start:mb_end],
+                        advantages[mb_start:mb_end],
+                    )
+                    self._accumulate_grads(lora_grads_mb, example_model_ids[mb_start:mb_end])
+                else:
+                    per_token_losses, target_logprobs = self._forward(
+                        input_ids[mb_start:mb_end],
+                        attention_mask[mb_start:mb_end],
+                        adapter_indices[mb_start:mb_end],
+                        target_ids[mb_start:mb_end],
+                        loss_mask[mb_start:mb_end],
+                        loss_fn_types[mb_start:mb_end],
+                        sampling_logprobs[mb_start:mb_end],
+                        advantages[mb_start:mb_end],
+                    )
 
-        # Flatten microbatches and slice to actual sequence lengths
-        token_losses_out = []
-        logprobs_out = []
-        idx = 0
-        for mb_losses, mb_logprobs in zip(token_losses_host, logprobs_host):
-            for i in range(mb_losses.shape[0]):
-                token_losses_out.append(mb_losses[i, : seq_lens[idx]].astype(jnp.float32))
-                logprobs_out.append(mb_logprobs[i, : seq_lens[idx]].astype(jnp.float32))
-                idx += 1
+                token_losses_device.append(per_token_losses)
+                logprobs_device.append(target_logprobs)
 
-        # Compute per-request results
-        for request_id, _, start_idx, end_idx in request_batch_slices:
-            loss_fn_outputs = []
-            # Compute per-example losses
-            for i in range(start_idx, end_idx):
-                # Extract losses for this example's tokens
-                token_losses = token_losses_out[i]
-                token_logprobs = logprobs_out[i]
-                loss_fn_outputs.append(
-                    {
-                        "elementwise_loss": {
-                            "data": token_losses.tolist(),
-                            "dtype": "float32",
-                            "shape": [token_losses.shape[0]],
-                        },
-                        "logprobs": {
-                            "data": token_logprobs.tolist(),
-                            "dtype": "float32",
-                            "shape": [token_logprobs.shape[0]],
-                        },
-                    }
+            token_losses_host, logprobs_host = jax.device_get((token_losses_device, logprobs_device))
+
+            token_losses_out = []
+            logprobs_out = []
+            idx = 0
+            for mb_losses, mb_logprobs in zip(token_losses_host, logprobs_host):
+                for i in range(mb_losses.shape[0]):
+                    token_losses_out.append(mb_losses[i, : seq_lens[idx]].astype(jnp.float32))
+                    logprobs_out.append(mb_logprobs[i, : seq_lens[idx]].astype(jnp.float32))
+                    idx += 1
+
+            batch_results: dict[str, types.ForwardBackwardOutput] = {}
+            for request_id, _, start_idx, end_idx in request_batch_slices:
+                loss_fn_outputs = []
+                for i in range(start_idx, end_idx):
+                    token_losses = token_losses_out[i]
+                    token_logprobs = logprobs_out[i]
+                    loss_fn_outputs.append(
+                        {
+                            "elementwise_loss": {
+                                "data": token_losses.tolist(),
+                                "dtype": "float32",
+                                "shape": [token_losses.shape[0]],
+                            },
+                            "logprobs": {
+                                "data": token_logprobs.tolist(),
+                                "dtype": "float32",
+                                "shape": [token_logprobs.shape[0]],
+                            },
+                        }
+                    )
+
+                batch_results[request_id] = types.ForwardBackwardOutput(
+                    loss_fn_output_type="scalar", loss_fn_outputs=loss_fn_outputs, metrics={}
                 )
 
-            results[request_id] = types.ForwardBackwardOutput(
-                loss_fn_output_type="scalar",
-                loss_fn_outputs=loss_fn_outputs,
-                metrics={},
-            )
+            return batch_results
+
+        forward_requests = {
+            request_id: (model_id, request_data, request_type)
+            for request_id, (model_id, request_data, request_type) in valid_requests.items()
+            if request_type == types.RequestType.FORWARD
+        }
+        forward_backward_requests = {
+            request_id: (model_id, request_data, request_type)
+            for request_id, (model_id, request_data, request_type) in valid_requests.items()
+            if request_type == types.RequestType.FORWARD_BACKWARD
+        }
+
+        results.update(_run_training_requests(forward_backward_requests, accumulate_grads=True))
+        results.update(_run_training_requests(forward_requests, accumulate_grads=False))
 
         return results
 
