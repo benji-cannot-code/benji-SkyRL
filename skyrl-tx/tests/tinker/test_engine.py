@@ -202,6 +202,34 @@ def test_micro_batch_grad_accumulation():
     _assert_tree_allclose(mean_micro_a2, mean_full_a2, rtol=1e-3, atol=5e-3)
 
 
+def test_forward_batch_produces_logprobs_without_accumulating_grads():
+    config = EngineConfig(
+        base_model=BASE_MODEL,
+        checkpoints_base=AnyPath(""),
+        max_lora_adapters=8,
+        max_lora_rank=32,
+    )
+    engine = TinkerEngine(config)
+
+    adapter_id = "adapter_forward"
+    engine.process_single_request(
+        types.RequestType.CREATE_MODEL, adapter_id, {"lora_config": {"rank": 8, "alpha": 8}}
+    )
+
+    forward_input = make_fwd_bwd_input([[1, 2, 3]])
+    results = engine.process_forward_batch({"10": (adapter_id, forward_input)})
+
+    assert "10" in results
+    output = results["10"]
+    assert isinstance(output, types.ForwardBackwardOutput)
+    assert len(output.loss_fn_outputs) == 1
+    assert output.loss_fn_outputs[0]["logprobs"]["shape"][0] == 3
+
+    accumulator = engine.accumulated_grads[adapter_id]
+    assert accumulator.grad_sum is None
+    assert accumulator.denominator == 0
+
+
 def test_process_optim_step_hyperparams_behavior():
     """Request-scoped overrides apply for the step, base hyperparameters stay unchanged, and update size shifts."""
     config = EngineConfig(
