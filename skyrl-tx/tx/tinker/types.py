@@ -16,6 +16,7 @@ class RequestType(str, Enum):
     """Types of requests that can be processed."""
 
     CREATE_MODEL = "create_model"
+    FORWARD = "forward"
     FORWARD_BACKWARD = "forward_backward"
     OPTIM_STEP = "optim_step"
     SAVE_WEIGHTS_FOR_SAMPLER = "save_weights_for_sampler"
@@ -105,6 +106,10 @@ class Datum(BaseModel):
 class ForwardBackwardInput(BaseModel):
     data: list[Datum]
     loss_fn: Literal["cross_entropy", "importance_sampling", "ppo"]
+
+
+class ForwardInput(ForwardBackwardInput):
+    pass
 
 
 class ForwardBackwardOutput(BaseModel):
