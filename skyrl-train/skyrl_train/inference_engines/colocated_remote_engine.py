@@ -75,14 +75,14 @@ class VLLMHTTPServerActor:
         *,
         model_path: str,
         tensor_parallel_size: int,
-        gpu_memory_utilization: Optional[float] = 0.9,
-        enforce_eager: bool = True,
-        enable_prefix_caching: bool = True,
-        dtype: str = "bfloat16",
-        distributed_executor_backend: str = "mp",
+        gpu_memory_utilization: float,
+        enforce_eager: bool,
+        enable_prefix_caching: bool,
+        dtype: str,
+        distributed_executor_backend: str,
+        quiet: bool,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        quiet: bool = False,
     ) -> str:
         self.port = port or get_free_port()
         if host:
@@ -239,8 +239,6 @@ def create_colocated_remote_engines(
                 enable_prefix_caching=cfg.generator.enable_prefix_caching,
                 dtype=cfg.generator.model_dtype,
                 distributed_executor_backend="mp" if tensor_parallel_size > 1 else "uni",
-                host=None,
-                port=None,
                 quiet=False,
             )
         )
