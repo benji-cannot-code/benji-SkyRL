@@ -178,30 +178,33 @@ class RemoteInferenceEngine(InferenceEngineInterface):
             ) as response:
                 return await response.json()
 
+    async def _post_to_update_weights_cuda_ipc(self, request: NamedWeightsUpdateRequest):
+        """Sends POST request to server's update_weights_cuda_ipc"""
+        names = request["names"]
+        dtypes = request["dtypes"]
+        shapes = request["shapes"]
+        ipc_handles_b64 = [
+            base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii") for extra in request["extras"]  # bytes
+        ]
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(
+                f"{self.url}/update_weights_cuda_ipc",
+                json={
+                    "names": names,
+                    "dtypes": dtypes,
+                    "shapes": shapes,
+                    "ipc_handles_b64": ipc_handles_b64,
+                },
+            )
+            return await resp.json()
+
     async def update_named_weights(self, request: NamedWeightsUpdateRequest):
         if "names" not in request:
             raise ValueError(f"Expected update weight request with 'names' entry, got keys: {request.keys()}")
 
         is_ipc = request.get("extras") and "ipc_handles" in request["extras"][0]
         if is_ipc:
-            names = request["names"]
-            dtypes = request["dtypes"]
-            shapes = request["shapes"]
-            ipc_handles_b64 = [
-                base64.b64encode(pickle.dumps(extra["ipc_handles"])).decode("ascii")  # bytes
-                for extra in request["extras"]
-            ]
-            async with aiohttp.ClientSession() as session:
-                resp = await session.post(
-                    f"{self.url}/update_weights_cuda_ipc",
-                    json={
-                        "names": names,
-                        "dtypes": dtypes,
-                        "shapes": shapes,
-                        "ipc_handles_b64": ipc_handles_b64,
-                    },
-                )
-                return await resp.json()
+            await self._post_to_update_weights_cuda_ipc(request)
 
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
