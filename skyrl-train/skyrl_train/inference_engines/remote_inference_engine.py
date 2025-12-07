@@ -204,7 +204,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
 
         is_ipc = request.get("extras") and "ipc_handles" in request["extras"][0]
         if is_ipc:
-            await self._post_to_update_weights_cuda_ipc(request)
+            return await self._post_to_update_weights_cuda_ipc(request)
 
         if self.engine_backend == "vllm":
             weight_update_method = "update_weights"
