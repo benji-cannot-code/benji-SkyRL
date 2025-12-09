@@ -17,6 +17,7 @@ import urllib.request
 import signal
 from transformers import PreTrainedTokenizerBase
 from omegaconf import DictConfig
+from loguru import logger
 
 
 def _server_ready(host: str, port: int, endpoint: str, timeout_seconds: int = 180) -> bool:
@@ -54,8 +55,8 @@ def _server_ready(host: str, port: int, endpoint: str, timeout_seconds: int = 18
             with urllib.request.urlopen(f"http://{host}:{port}/{endpoint}", timeout=2) as resp:
                 if resp.status == 200:
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Server readiness failed: {e}")
         if time.time() - start_time >= timeout_seconds:
             return False
         time.sleep(0.5)
@@ -137,8 +138,15 @@ class VLLMHTTPServerActor:
 
     def kill(self):
         # Kill only the vLLM subprocess group (created via setsid in start())
-        pgid = os.getpgid(self.pid)
-        os.killpg(pgid, signal.SIGTERM)
+        if self.pid is None:
+            # kill might be called before start finishes
+            return
+        try:
+            pgid = os.getpgid(self.pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            # process group might already be dead
+            pass
 
     def __ray_shutdown__(self):
         self.kill()
