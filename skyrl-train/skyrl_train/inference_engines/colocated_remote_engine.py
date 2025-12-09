@@ -270,6 +270,8 @@ def create_colocated_remote_engines(
 
     # Put servers to sleep
     sleep_level = 1 if getattr(cfg.trainer.policy.model.lora, "rank", 0) > 0 else 2
-    asyncio.run(asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines]))
+    async def _sleep_all():
+        await asyncio.gather(*[engine.sleep(level=sleep_level) for engine in engines])
+        asyncio.run(_sleep_all())
 
     return engines
