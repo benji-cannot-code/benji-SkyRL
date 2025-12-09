@@ -202,7 +202,7 @@ class RemoteInferenceEngine(InferenceEngineInterface):
         if "names" not in request:
             raise ValueError(f"Expected update weight request with 'names' entry, got keys: {request.keys()}")
 
-        is_ipc = request.get("extras") and "ipc_handles" in request["extras"][0]
+        is_ipc = request.get("extras") and len(request["extras"]) > 0 and "ipc_handles" in request["extras"][0]
         if is_ipc:
             return await self._post_to_update_weights_cuda_ipc(request)
 
