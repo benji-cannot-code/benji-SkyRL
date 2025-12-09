@@ -68,7 +68,7 @@ class VLLMHTTPServerActor:
 
     def __init__(self):
         self.pid: Optional[int] = None
-        self.host = ray._private.services.get_node_ip_address().strip("[]")
+        self.host = ray.util.get_node_ip_address().strip("[]")
         self.port: Optional[int] = None
 
     def start(
