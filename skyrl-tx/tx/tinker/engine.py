@@ -304,7 +304,7 @@ class TinkerEngine:
         if self.config.enforce_eager:
             # Disable JIT compilation for debugging
             self._forward_backward_and_accumulate = forward_backward_and_accumulate
-            self._forward_fn = forward_only
+            self._forward = forward_only
 
         else:
             # Retrieve the sharding of lora and non_lora params and compute the sharding of inputs and outputs
@@ -329,7 +329,7 @@ class TinkerEngine:
                 out_shardings=(accumulated_grads_shardings, replicated, replicated, scalar),
                 donate_argnames=("accumulated_grads",),
             )
-            self._forward_fn = jax.jit(
+            self._forward = jax.jit(
                 forward_only,
                 in_shardings=(lora_shardings, non_lora_shardings) + (replicated,) * 8,
                 out_shardings=(replicated, replicated),
@@ -374,34 +374,6 @@ class TinkerEngine:
             logger.info(f"JIT compilation for {mode} seq_len={seq_len} took {elapsed:.2f}s")
         else:
             yield
-
-    def _forward(
-        self,
-        input_ids: jax.Array,
-        attention_mask: jax.Array,
-        adapter_indices: jax.Array,
-        target_ids: jax.Array,
-        loss_mask: jax.Array,
-        loss_fn_types: jax.Array,
-        sampling_logprobs: jax.Array,
-        advantages: jax.Array,
-    ) -> tuple[jax.Array, jax.Array]:
-        """Run forward-only on a batch of inputs."""
-        seq_len = input_ids.shape[1]
-        with jax.set_mesh(self.mesh), self._jit_timing_context(seq_len, mode="train"):
-            per_token_losses, target_logprobs = self._forward_fn(
-                self.lora_params,
-                self.non_lora_params,
-                input_ids,
-                attention_mask,
-                adapter_indices,
-                target_ids,
-                loss_mask,
-                loss_fn_types,
-                sampling_logprobs,
-                advantages,
-            )
-        return per_token_losses, target_logprobs
 
     def _filter_valid_requests(
         self,
@@ -655,6 +627,8 @@ class TinkerEngine:
                 else:
                     # Forward-only
                     per_token_losses, target_logprobs = forward_fn(
+                        self.lora_params,
+                        self.non_lora_params,
                         input_ids[mb_start:mb_end],
                         attention_mask[mb_start:mb_end],
                         adapter_indices[mb_start:mb_end],
