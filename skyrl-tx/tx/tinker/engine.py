@@ -490,7 +490,7 @@ class TinkerEngine:
         # Get all pending forward_backward operations ordered by request_id
         fwd_bwd_query = (
             select(FutureDB)
-            .where(FutureDB.request_type == types.RequestType.FORWARD_ONLY)
+            .where(FutureDB.request_type == types.RequestType.FORWARD)
             .where(FutureDB.status == RequestStatus.PENDING)
             .order_by(FutureDB.request_id)
         )
@@ -545,7 +545,7 @@ class TinkerEngine:
             select(FutureDB)
             .where(FutureDB.status == RequestStatus.PENDING)
             .where(FutureDB.request_type != types.RequestType.FORWARD_BACKWARD)
-            .where(FutureDB.request_type != types.RequestType.FORWARD_ONLY)
+            .where(FutureDB.request_type != types.RequestType.FORWARD)
             .where(FutureDB.request_type != types.RequestType.SAMPLE)
             .where(FutureDB.request_type != types.RequestType.EXTERNAL)
             .order_by(FutureDB.request_id)
@@ -1158,7 +1158,7 @@ class TinkerEngine:
         while True:
             # Query for pending requests and extract data within session context
             with Session(self.db_engine) as session:
-                # Use look-ahead scheduling to find batchable forward_backward  and forward_only operations
+                # Use look-ahead scheduling to find batchable forward_backward and forward_only operations
                 forward_backward_requests = self.find_batchable_forward_backward(session)
                 forward_requests = self.find_batchable_forward(session)
                 # Find pending sample requests that can be batched

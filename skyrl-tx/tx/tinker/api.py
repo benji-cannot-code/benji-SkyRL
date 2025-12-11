@@ -592,7 +592,7 @@ async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_s
 
     request_id = await create_future(
         session=session,
-        request_type=types.RequestType.FORWARD_ONLY,
+        request_type=types.RequestType.FORWARD,
         model_id=request.model_id,
         request_data=request.forward_input.to_types(),
     )
@@ -774,7 +774,7 @@ class RetrieveFutureRequest(BaseModel):
 async def retrieve_future(request: RetrieveFutureRequest, req: Request):
     """Retrieve the result of an async operation, waiting until it's available."""
     timeout = 300  # 5 minutes
-    poll_interval = 0.2  # 200ms
+    poll_interval = 0.1  # 100ms
 
     for _ in range(int(timeout / poll_interval)):
         try:

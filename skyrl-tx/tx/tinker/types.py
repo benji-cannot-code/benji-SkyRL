@@ -17,7 +17,7 @@ class RequestType(str, Enum):
 
     CREATE_MODEL = "create_model"
     FORWARD_BACKWARD = "forward_backward"
-    FORWARD_ONLY = "forward"
+    FORWARD = "forward"
     OPTIM_STEP = "optim_step"
     SAVE_WEIGHTS_FOR_SAMPLER = "save_weights_for_sampler"
     SAVE_WEIGHTS = "save_weights"
