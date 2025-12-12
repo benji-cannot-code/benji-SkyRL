@@ -1,30 +1,31 @@
 set -x
 
-# Colocated DAPO training+generation for Qwen3-1.7B-Base on DAPO training data and validate on AIME 2024.
+# Colocated SAPO training+generation for Qwen3-4B-Base on DAPO training data and validate on AIME 2024.
+# Uses examples/algorithms/dapo/main_dapo.py script, but with the SAPO policy loss and sequence mean loss reduction.
 # bash examples/algorithms/dapo/prepare_dapo_data.sh
-# bash examples/algorithms/dapo/run_dapo_qwen3_1.7b_aime.sh
+# bash examples/algorithms/sapo/run_sapo_qwen3_4b_aime.sh
 
-MODEL_NAME="Qwen/Qwen3-1.7B-Base"
+MODEL_NAME="Qwen/Qwen3-4B-Base"
 DATA_DIR="$HOME/data/dapo"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-NUM_NODES=2
+NUM_NODES=1
 NUM_GPUS_PER_NODE=8
-NUM_INFERENCE_ENGINES=16
+NUM_INFERENCE_ENGINES=8
 INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE=1
 LOGGER="wandb"  # change to "console" to print to stdout
 
-CLIP_RATIO_LOW=0.2
-CLIP_RATIO_HIGH=0.28
-# use dr. grpo loss reduction
-LOSS_REDUCTION="token_mean"
+# SAPO specific parameters
+TAU_POS=1.0
+TAU_NEG=1.05
+LOSS_REDUCTION="sequence_mean"
+
+# parameters carried over from DAPO
 # applies overlong filtering (but not soft overlong punishment)
 APPLY_OVERLONG_FILTERING=true
 # apply soft overlong punishment with custom trainer impl in main_dapo.py
 OVERLONG_BUFFER_LEN=$((1024 * 4))
 OVERLONG_BUFFER_PENALTY_FACTOR=1.0
-
-# other DAPO parameters
 USE_KL_LOSS=false
 TEMPERATURE=1.0
 TOP_P=1.0
@@ -45,7 +46,7 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$TEST_FILE']" \
   trainer.algorithm.advantage_estimator="grpo" \
-  trainer.algorithm.policy_loss_type="dual_clip" \
+  trainer.algorithm.policy_loss_type="sapo" \
   +trainer.algorithm.overlong_buffer.len=$OVERLONG_BUFFER_LEN \
   +trainer.algorithm.overlong_buffer.penalty_factor=$OVERLONG_BUFFER_PENALTY_FACTOR \
   trainer.algorithm.loss_reduction=$LOSS_REDUCTION \
@@ -66,21 +67,21 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   generator.num_inference_engines=$NUM_INFERENCE_ENGINES \
   generator.inference_engine_tensor_parallel_size=$INFERENCE_ENGINE_TENSOR_PARALLEL_SIZE \
   trainer.epochs=20 \
-  trainer.algorithm.eps_clip_low=$CLIP_RATIO_LOW \
-  trainer.algorithm.eps_clip_high=$CLIP_RATIO_HIGH \
+  trainer.algorithm.sapo.tau_pos=$TAU_POS \
+  trainer.algorithm.sapo.tau_neg=$TAU_NEG \
   trainer.eval_batch_size=1024 \
   trainer.eval_before_train=true \
-  trainer.eval_interval=5 \
+  trainer.eval_interval=10 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_forward_batch_size_per_gpu=8 \
   trainer.micro_train_batch_size_per_gpu=4 \
-  trainer.ckpt_interval=10 \
+  trainer.ckpt_interval=-1 \
   trainer.max_prompt_length=$MAX_PROMPT_LENGTH \
   generator.sampling_params.max_generate_length=$MAX_RESPONSE_LENGTH \
   trainer.policy.optimizer_config.lr=$LR \
-  trainer.policy.optimizer_config.num_warmup_steps=160 \
+  trainer.policy.optimizer_config.num_warmup_steps=80 \
   trainer.policy.optimizer_config.weight_decay=0.1 \
   trainer.policy.optimizer_config.max_grad_norm=1.0 \
   generator.backend=vllm \
@@ -93,11 +94,11 @@ uv run --isolated --extra vllm -m examples.algorithms.dapo.main_dapo \
   generator.eval_n_samples_per_prompt=$EVAL_N_SAMPLES_PER_PROMPT \
   generator.gpu_memory_utilization=0.8 \
   trainer.logger="$LOGGER" \
-  trainer.project_name="dapo_aime" \
-  trainer.run_name="dapo_qwen3_1.7b_base" \
-  trainer.export_path="$HOME/exports/dapo_qwen3_1.7b_base" \
-  trainer.hf_save_interval=10 \
+  trainer.project_name="sapo_aime" \
+  trainer.run_name="sapo_qwen3_4b_base" \
+  trainer.export_path="$HOME/exports/sapo_qwen3_4b_base" \
+  trainer.hf_save_interval=-1 \
   trainer.resume_mode=latest \
   trainer.max_ckpts_to_keep=3 \
-  trainer.ckpt_path="$HOME/ckpts/dapo_qwen3_1.7b_base" \
+  trainer.ckpt_path="$HOME/ckpts/sapo_qwen3_4b_base" \
   $@
