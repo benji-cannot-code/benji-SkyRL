@@ -231,16 +231,6 @@ class TinkerEngine:
             # policy=None corresponds to full activation recomputation
             _model_forward = jax.checkpoint(_model_forward, policy=None)
 
-        def compute_loss_per_example(loss_fn_type, target_logprobs, loss_mask, sampling_logprobs, advantages):
-            return jax.lax.switch(
-                loss_fn_type,
-                LOSS_FUNCTIONS,
-                target_logprobs,
-                loss_mask,
-                sampling_logprobs,
-                advantages,
-            )
-
         def loss_for_lora(
             lora_params: nnx.State,
             non_lora_params: nnx.State,
@@ -259,6 +249,16 @@ class TinkerEngine:
 
             logprobs = jax.nn.log_softmax(logits, axis=-1)  # [B, T, V]
             target_logprobs = jnp.take_along_axis(logprobs, target_ids[..., None], axis=-1).squeeze(-1)
+
+            def compute_loss_per_example(loss_fn_type, target_logprobs, loss_mask, sampling_logprobs, advantages):
+                return jax.lax.switch(
+                    loss_fn_type,
+                    LOSS_FUNCTIONS,
+                    target_logprobs,
+                    loss_mask,
+                    sampling_logprobs,
+                    advantages,
+                )
 
             per_token_losses = jax.vmap(compute_loss_per_example)(
                 loss_fn_types,
@@ -287,19 +287,17 @@ class TinkerEngine:
             sampling_logprobs: jax.Array,
             advantages: jax.Array,
         ) -> tuple[jax.Array, jax.Array]:
-            logits = _model_forward(
-                self.graphdef,
+            _, (target_logprobs, per_token_losses) = loss_for_lora(
                 lora_params,
                 non_lora_params,
                 input_ids,
                 attention_mask,
                 adapter_indices,
-            )
-
-            logprobs = jax.nn.log_softmax(logits, axis=-1)
-            target_logprobs = jnp.take_along_axis(logprobs, target_ids[..., None], axis=-1).squeeze(-1)
-            per_token_losses = jax.vmap(compute_loss_per_example)(
-                loss_fn_types, target_logprobs, loss_mask, sampling_logprobs, advantages
+                target_ids,
+                loss_mask,
+                loss_fn_types,
+                sampling_logprobs,
+                advantages,
             )
             return per_token_losses, target_logprobs
 
