@@ -459,16 +459,16 @@ class TinkerEngine:
 
         # Get all pending forward-only or forward-backward operations ordered by request_id
         request_type = types.RequestType.FORWARD if forward_only else types.RequestType.FORWARD_BACKWARD
-        fwd_bwd_query = (
+        pass_query = (
             select(FutureDB)
             .where(FutureDB.request_type == request_type)
             .where(FutureDB.status == RequestStatus.PENDING)
             .order_by(FutureDB.request_id)
         )
-        fw_ops = session.exec(fwd_bwd_query).all()
+        pass_ops = session.exec(pass_query).all()
 
         # Filter: only include ops that come before their model's barrier
-        batchable = [op for op in fw_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
+        batchable = [op for op in pass_ops if op.model_id not in barriers or op.request_id < barriers[op.model_id]]
 
         input_type = types.ForwardInput if forward_only else types.ForwardBackwardInput
         return {f.request_id: (f.model_id, input_type.model_validate(f.request_data)) for f in batchable}
