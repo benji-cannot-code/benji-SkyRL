@@ -104,7 +104,7 @@ def _apply_serialized_fp8_weight_sync_defaults(
 
     ignored_layers = _serialized_fp8_ignored_layers(model_path, mode)
     if ignored_layers:
-        logger.info( # TODO(benji agent): this logging is misleading, since this is only engine init, not the actual weight sync. change the wording to show that this is engine init
+        logger.info(  # TODO(benji agent): this logging is misleading, since this is only engine init, not the actual weight sync. change the wording to show that this is engine init
             "FP8 weight sync (%s) will leave %d vLLM modules unquantized "
             "to match the model's FP8 quantization spec.",
             mode,
