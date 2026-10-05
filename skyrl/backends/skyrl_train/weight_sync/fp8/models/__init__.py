@@ -5,8 +5,10 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
     MoeExpertSpec,
     MoeProjection,
     batched_moe_wire_targets,
+    fp8_ignored_layers,
     register_fp8_spec,
     registered_fp8_spec_names,
+    resolve_excluded_modules,
     resolve_fp8_spec,
 )
 
@@ -19,7 +21,9 @@ __all__ = [
     "MoeProjection",
     "QWEN35_FP8_SPEC",
     "batched_moe_wire_targets",
+    "fp8_ignored_layers",
     "register_fp8_spec",
     "registered_fp8_spec_names",
+    "resolve_excluded_modules",
     "resolve_fp8_spec",
 ]

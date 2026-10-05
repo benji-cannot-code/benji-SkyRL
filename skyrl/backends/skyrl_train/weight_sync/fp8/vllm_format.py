@@ -20,7 +20,7 @@ quantization config injected at engine boot, and the per-model ignore lists.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterator, Sequence
+from typing import Iterable, Iterator, Sequence
 
 import torch
 
@@ -61,6 +61,9 @@ class SerializedFp8Config:
 
     ``spec`` is the per-model quantization policy, resolved once from the HF
     config via ``resolve_fp8_spec``; the tensor iterators require it.
+    ``excluded_modules`` are the spec's FP8 modules the user keeps in the
+    model dtype (``resolve_excluded_modules``); the engine builds the same
+    modules unquantized.
     """
 
     # blockwise-wire parameters; the MXFP8 wire has no equivalents (its group
@@ -70,6 +73,7 @@ class SerializedFp8Config:
     # shared across wires
     spec: ModelFp8Spec | None = None
     wire_format: str = BLOCKWISE_FP8
+    excluded_modules: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "weight_block_size", normalize_block_size(self.weight_block_size))
@@ -94,6 +98,7 @@ class SerializedFp8Config:
 def resolve_serialized_fp8_config(
     fp8_weight_sync_mode: str | None,
     hf_config: object | None,
+    exclude_modules: Sequence[str] | None = None,
 ) -> SerializedFp8Config | None:
     """Turn ``fp8_weight_sync_mode`` into the sender's serializer config.
 
@@ -101,12 +106,16 @@ def resolve_serialized_fp8_config(
     gate that admits one wire and not another cannot diverge between backends:
     every wire in ``WIRE_FORMATS`` is usable end to end, or none is.
 
+    ``exclude_modules`` (``fp8_weight_sync_exclude_modules``) goes through the
+    same ``resolve_excluded_modules`` expansion the engine's ignore list does.
+
     Returns None when FP8 weight sync is off. Raises ``ValueError`` for a wire
     outside ``WIRE_FORMATS`` (``"auto"`` included -- it must already be resolved
     to a concrete wire by then) or for a checkpoint with no registered spec.
     """
     from skyrl.backends.skyrl_train.weight_sync.fp8.models import (
         registered_fp8_spec_names,
+        resolve_excluded_modules,
         resolve_fp8_spec,
     )
 
@@ -123,7 +132,8 @@ def resolve_serialized_fp8_config(
             "FP8 weight sync requires a registered model spec for the configured checkpoint "
             f"(registered specs: {', '.join(registered_fp8_spec_names())})."
         )
-    return SerializedFp8Config(spec=spec, wire_format=fp8_weight_sync_mode)
+    excluded = resolve_excluded_modules(spec, hf_config, exclude_modules or ())
+    return SerializedFp8Config(spec=spec, wire_format=fp8_weight_sync_mode, excluded_modules=frozenset(excluded))
 
 
 def _mxfp8_group_args(dynamic: bool) -> dict:
@@ -244,14 +254,24 @@ def iter_serialized_fp8_tensors(
     target_dtype: torch.dtype,
     config: SerializedFp8Config,
 ) -> Iterator[tuple[str, torch.Tensor]]:
-    """Yield vLLM checkpoint tensors for one Megatron-exported weight."""
+    """Yield vLLM checkpoint tensors for one Megatron-exported weight.
+
+    Weights of an excluded module pass through in ``target_dtype``, the way
+    the unquantized engine module loads them; a batched expert tensor then
+    keeps its checkpoint name and goes through the model's own loader.
+    """
 
     spec = config.require_spec()
-    if spec.moe_expert_spec(name) is not None:
+    moe_spec = spec.moe_expert_spec(name)
+    if moe_spec is not None and moe_spec.experts_base not in config.excluded_modules:
         yield from iter_batched_moe_expert_fp8_tensors(name, tensor, config)
         return
 
-    if tensor.ndim == 2 and spec.should_quantize(name, tuple(tensor.shape), config.wire_format):
+    if (
+        tensor.ndim == 2
+        and spec.should_quantize(name, tuple(tensor.shape), config.wire_format)
+        and name.removesuffix(".weight") not in config.excluded_modules
+    ):
         if config.is_mxfp8:
             q_weight, scale = mx_cast_to_fp8(tensor)
         else:
@@ -265,3 +285,28 @@ def iter_serialized_fp8_tensors(
         return
 
     yield name, tensor.to(dtype=target_dtype)
+
+
+def iter_serialized_fp8_weights(
+    weights: Iterable[tuple[str, torch.Tensor]],
+    config: SerializedFp8Config,
+) -> Iterator[tuple[str, torch.Tensor]]:
+    """Serialize a whole exported weight stream; unquantized weights keep their dtype.
+
+    Raises once the stream ends if an excluded module never appeared in it.
+    The engine builds every excluded module unquantized, so an exclusion that
+    names a module the export spells differently would otherwise ship FP8
+    weights into an unquantized parameter.
+    """
+
+    spec = config.require_spec()
+    unexported = set(config.excluded_modules)
+    for name, tensor in weights:
+        moe_spec = spec.moe_expert_spec(name)
+        unexported.discard(moe_spec.experts_base if moe_spec is not None else name.removesuffix(".weight"))
+        yield from iter_serialized_fp8_tensors(name, tensor, tensor.dtype, config)
+    if unexported:
+        raise ValueError(
+            f"FP8 weight sync excludes {len(unexported)} modules the trainer never exported, "
+            f"e.g. {sorted(unexported)[:3]}: the exclusions and the exported weight names disagree."
+        )

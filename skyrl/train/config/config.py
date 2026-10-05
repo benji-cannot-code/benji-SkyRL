@@ -9,6 +9,7 @@ import copy
 import dataclasses
 import json
 import os
+import re
 import typing
 from abc import ABC
 from dataclasses import asdict, dataclass, field
@@ -554,6 +555,38 @@ class MegatronConfig(BaseConfig):
     """TransformerEngine amax history reduction, e.g. ``"most_recent"`` or ``"max"``. Folded
     into ``transformer_config_kwargs["fp8_amax_compute_algo"]``; an explicit kwarg takes
     precedence."""
+    fp8_exclude_modules: Optional[List[str]] = None
+    """Megatron module-path globs whose linear layers train in BF16 while the rest use FP8.
+
+    Patterns use ``fnmatch`` syntax and match Megatron module paths such as
+    ``decoder.layers.3.self_attention.linear_qkv``, ``decoder.layers.3.self_attention.in_proj``
+    (GDN), ``decoder.layers.3.mlp.experts.linear_fc1``, ``decoder.layers.3.mlp.shared_experts.linear_fc2``
+    and ``output_layer``. Examples: ``["*.shared_experts.*"]``, ``["*.self_attention.*"]``. Megatron
+    numbers ``layers.N`` within each pipeline stage, so layer-indexed patterns are rejected when
+    ``pipeline_model_parallel_size > 1``; use ``num_layers_at_start_in_bf16`` /
+    ``num_layers_at_end_in_bf16`` for layer ranges.
+
+    Built into Megatron's per-module ``quant_recipe``. These are training-side names only; the
+    rollout's FP8 modules are set separately by ``generator.inference_engine.fp8_weight_sync_exclude_modules``.
+    Mutually exclusive with ``te_precision_config_file``."""
+    num_layers_at_start_in_bf16: int = 0
+    """Number of leading transformer layers trained in BF16 instead of FP8. Together with
+    ``num_layers_at_end_in_bf16``, folded into ``transformer_config_kwargs`` as Megatron's
+    ``first_last_layers_bf16`` / ``num_layers_at_start_in_bf16`` / ``num_layers_at_end_in_bf16``
+    when either is positive; explicit kwargs take precedence. Layer numbers are global, so this
+    works under pipeline parallelism."""
+    num_layers_at_end_in_bf16: int = 0
+    """Number of trailing transformer layers trained in BF16 instead of FP8; see
+    ``num_layers_at_start_in_bf16``."""
+    te_precision_config_file: Optional[str] = None
+    """Path to a Megatron per-module precision YAML (the ``--te-precision-config-file`` format),
+    loaded as ``quant_recipe`` on every training worker, so it must be readable there.
+
+    The file holds named ``configs`` (TE quantization recipes, e.g. BF16, ``blockwise``, ``mxfp8``)
+    and ordered glob ``matchers`` over Megatron module paths; the first matching matcher picks a
+    module's config, and unmatched modules use the global ``fp8`` / ``fp8_recipe``. See
+    ``megatron/core/extensions/TransformerEngineMixedPrecision.md`` in Megatron-LM. Layer indices in
+    module paths are per pipeline stage. Mutually exclusive with ``fp8_exclude_modules``."""
     transformer_config_kwargs: Dict[str, Any] = field(
         default_factory=lambda: copy.deepcopy(DEFAULT_TRANSFORMER_CONFIG_KWARGS)
     )
@@ -642,6 +675,23 @@ class MegatronConfig(BaseConfig):
         ):
             if value is not None:
                 self.transformer_config_kwargs.setdefault(key, value)
+        if self.num_layers_at_start_in_bf16 > 0 or self.num_layers_at_end_in_bf16 > 0:
+            self.transformer_config_kwargs.setdefault("first_last_layers_bf16", True)
+            self.transformer_config_kwargs.setdefault("num_layers_at_start_in_bf16", self.num_layers_at_start_in_bf16)
+            self.transformer_config_kwargs.setdefault("num_layers_at_end_in_bf16", self.num_layers_at_end_in_bf16)
+        if self.fp8_exclude_modules and self.te_precision_config_file:
+            raise ValueError(
+                "fp8_exclude_modules and te_precision_config_file both set per-module precision; "
+                "set one (a precision config file can list the exclusions as BF16 matchers)."
+            )
+        if self.pipeline_model_parallel_size > 1:
+            layer_indexed = [p for p in self.fp8_exclude_modules or [] if re.search(r"layers\.[0-9\[?]", p)]
+            if layer_indexed:
+                raise ValueError(
+                    f"fp8_exclude_modules {layer_indexed} select layers by index, but Megatron numbers "
+                    "layers within each pipeline stage when pipeline_model_parallel_size > 1. Use "
+                    "num_layers_at_start_in_bf16 / num_layers_at_end_in_bf16 for layer ranges."
+                )
         for k, v in DEFAULT_TRANSFORMER_CONFIG_KWARGS.items():
             self.transformer_config_kwargs.setdefault(k, copy.deepcopy(v))
         if self.optimizer_config_kwargs is None:
@@ -1207,7 +1257,25 @@ class InferenceEngineConfig(BaseConfig):
     ``skyrl/backends/skyrl_train/weight_sync/fp8/models/README.md``). The vLLM engine settings
     this needs (``quantization``, ``load_format="dummy"``, and the matching
     ``hf_overrides.quantization_config`` with per-model ignored layers) are applied
-    automatically; the first weight sync supplies real weights before any generation."""
+    automatically, replacing any user-supplied ``quantization_config``; the first weight sync
+    supplies real weights before any generation.
+
+    Which modules are FP8 is the model spec's policy, minus ``fp8_weight_sync_exclude_modules``.
+    This is configured independently of the trainer's FP8 settings."""
+    fp8_weight_sync_exclude_modules: Optional[List[str]] = None
+    """HF module-name globs to keep in ``model_dtype`` on the FP8 rollout, on top of the model spec.
+
+    Patterns use ``fnmatch`` syntax and match module names as they appear in the HF checkpoint,
+    without the ``.weight`` suffix, e.g. ``model.language_model.layers.3.self_attn.q_proj``. A MoE
+    layer's routed experts are one module, ``<layer>.mlp.experts``. Examples:
+    ``["*.layers.0.*", "*.layers.39.*"]`` (first and last layer of a 40-layer model),
+    ``["*.mlp.shared_expert.*"]``, ``["*.layers.3.mlp.experts"]``.
+
+    SkyRL expands the patterns against the model spec with one function, used both for the vLLM
+    engine's ignore list and for the weights the trainer quantizes, so the two always agree. A
+    pattern must match at least one module the model spec syncs as FP8, and modules vLLM fuses
+    into one must be excluded together (for Qwen3.5: ``q_proj``/``k_proj``/``v_proj``,
+    ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``). Requires ``fp8_weight_sync_mode``."""
     run_engines_locally: bool = True
     """Launch inference servers during the training run in the current Ray cluster.
     When ``False``, point SkyRL at an external HTTP/vLLM deployment via ``external_proxy_url`` and/or
