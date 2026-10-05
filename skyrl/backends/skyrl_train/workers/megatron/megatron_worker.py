@@ -111,7 +111,7 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     get_microbatch_iterator,
     reduce_metrics,
 )
-from skyrl.env_vars import SKYRL_WORKER_NCCL_TIMEOUT_IN_S
+from skyrl.env_vars import SKYRL_MEGATRON_RANDOM_INIT, SKYRL_WORKER_NCCL_TIMEOUT_IN_S
 from skyrl.train.config.config import MegatronDDPConfig, get_config_as_dict
 from skyrl.train.utils.utils import update_model_config
 from skyrl.utils.tok import get_tokenizer
@@ -130,6 +130,33 @@ from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
 
 apply_shared_expert_lora_tp_patch()
 apply_dsa_hybrid_indexer_patch()
+
+
+def _broadcast_tp_replicated_params(model_chunks: List[nn.Module]) -> None:
+    """Make random-init parameters that are replicated across tensor-parallel ranks identical.
+
+    Random init draws some TP-replicated parameters (e.g. the MoE router weight, the DSA k-pool
+    gate) independently on every TP rank. A loaded checkpoint gives every rank the same copy, and
+    their gradients are all-reduced over TP as if they were one tensor, so copy TP rank 0's values.
+    Expert parameters (``allreduce=False``) belong to the expert-parallel layout and are skipped.
+    """
+    tp_group = mpu.get_tensor_model_parallel_group()
+    if tp_group.size() == 1:
+        return
+    src = torch.distributed.get_global_rank(tp_group, 0)
+    changed = total = 0
+    for chunk in model_chunks:
+        for param in chunk.parameters():
+            if getattr(param, "tensor_model_parallel", False) or not getattr(param, "allreduce", True):
+                continue
+            before = param.data.clone()
+            torch.distributed.broadcast(param.data, src=src, group=tp_group)
+            changed += int(not torch.equal(before, param.data))
+            total += 1
+    if torch.distributed.get_rank() == 1:  # TP rank 1 of the first TP group (TP is the fastest-varying rank)
+        logger.info(
+            f"SKYRL_MEGATRON_RANDOM_INIT: synced {total} TP-replicated params from TP rank 0; {changed} differed"
+        )
 
 
 class MegatronWorker:
@@ -288,7 +315,9 @@ class MegatronWorker:
                 "DeepSeek-V3 bridge (vision tower + mm projector dropped)"
             )
 
-        provider = bridge.to_megatron_provider()
+        if SKYRL_MEGATRON_RANDOM_INIT:
+            logger.warning("SKYRL_MEGATRON_RANDOM_INIT=1: randomly initializing weights (checkpoint not loaded)")
+        provider = bridge.to_megatron_provider(load_weights=not SKYRL_MEGATRON_RANDOM_INIT)
 
         if not enable_mtp and getattr(provider, "mtp_num_layers", None):
             logger.info(f"Disabling MTP for training (mtp_num_layers={provider.mtp_num_layers} -> None)")
@@ -567,6 +596,8 @@ class MegatronWorker:
         model = self.provider.provide_distributed_model(
             ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp, bf16=bf16
         )
+        if SKYRL_MEGATRON_RANDOM_INIT:
+            _broadcast_tp_replicated_params(model)
         return model
 
     def _forward_logprobs(self, data: TrainingInputBatch) -> torch.Tensor:
@@ -1104,6 +1135,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             ``metrics`` (all-reduced across DP).
         """
         self.model.train()
+        torch.cuda.reset_peak_memory_stats()
 
         all_metrics = defaultdict(list)
 
@@ -1254,6 +1286,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         if use_token_batching:
             status["num_microbatches"] = float(len(micro_buffer))
             status["num_padding_microbatches"] = float(num_padding_microbatches)
+
+        # Peak CUDA memory over this forward_backward call, max-reduced across ranks.
+        status["peak_mem_allocated_gb_max"] = torch.cuda.max_memory_allocated() / 1024**3
+        status["peak_mem_reserved_gb_max"] = torch.cuda.max_memory_reserved() / 1024**3
 
         group = mpu.get_data_parallel_group(with_context_parallel=False)
         status = all_reduce_metrics(status, self.strategy, group=group, sum_loss_metrics=True)
