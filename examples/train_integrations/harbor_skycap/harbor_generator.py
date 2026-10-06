@@ -35,6 +35,7 @@ from skyrl.train.generators.base import (
 from skyrl.train.generators.utils import build_vllm_cache_salt
 from skyrl.train.utils.rate_limiter import create_rate_limiter
 
+from ..harbor.trial_metrics import TrialAttempts, trial_metrics
 from .compose import TrialOutcome, compose, split
 
 litellm.suppress_debug_info = True
@@ -113,6 +114,7 @@ class HarborSkycapGenerator(GeneratorInterface):
         cache_salt = self._cache_salt()
 
         outcomes: List[Optional[TrialOutcome]] = [None] * len(prompts)
+        attempts = [TrialAttempts() for _ in prompts]
         progress = tqdm(
             disable=disable_tqdm,
             total=len(prompts),
@@ -122,7 +124,7 @@ class HarborSkycapGenerator(GeneratorInterface):
         )
 
         async def worker(index: int, prompt: ConversationType, trajectory_id: TrajectoryID) -> None:
-            outcomes[index] = await self._trial(prompt, trajectory_id, cache_salt, step)
+            outcomes[index] = await self._trial(prompt, trajectory_id, cache_salt, step, attempts[index])
             progress.update(1)
 
         try:
@@ -132,13 +134,15 @@ class HarborSkycapGenerator(GeneratorInterface):
         finally:
             progress.close()
 
-        return compose(
+        output = compose(
             outcomes,
             overlong_filtering=self.generator_cfg.apply_overlong_filtering,
             top_k=self.generator_cfg.sampling_params.top_k,
             sample_support=getattr(self.generator_cfg.inference_engine, "enable_return_sample_support_set", False),
             routed_experts=self._routed_experts,
         )
+        output["rollout_metrics"].update(trial_metrics(attempts))
+        return output
 
     async def _trial(
         self,
@@ -146,16 +150,19 @@ class HarborSkycapGenerator(GeneratorInterface):
         trajectory_id: TrajectoryID,
         cache_salt: Optional[str],
         step: Optional[int],
+        attempts: TrialAttempts,
     ) -> TrialOutcome:
         """One rollout, retried on unknown errors. Never raises: one failure must not cancel the batch."""
         started = time.monotonic()
         missing_routes = False
         for attempt in range(MAX_NUM_RETRIES_PER_TRIAL):
             prefix = f"Trajectory {trajectory_id} attempt {attempt + 1}/{MAX_NUM_RETRIES_PER_TRIAL}"
+            attempts.start()
             try:
-                outcome = await self._attempt(prompt, trajectory_id, cache_salt, step, attempt)
+                outcome = await self._attempt(prompt, trajectory_id, cache_salt, step, attempt, attempts)
             except Exception as error:  # noqa: BLE001 - retried, then masked
                 logger.warning(f"{prefix} failed: {type(error).__name__}: {error}")
+                attempts.fail(error)
                 continue
             outcome.e2e_time = time.monotonic() - started
             if outcome.stop_reason != "error":
@@ -176,6 +183,7 @@ class HarborSkycapGenerator(GeneratorInterface):
         cache_salt: Optional[str],
         step: Optional[int],
         attempt: int,
+        attempts: TrialAttempts,
     ) -> TrialOutcome:
         """One attempt on its own trajectory, so a retry never shares a graph with the attempt it replaces."""
         meta = {
@@ -190,6 +198,7 @@ class HarborSkycapGenerator(GeneratorInterface):
             async with self._rate_limiter:
                 results = await (await Trial.create(TrialConfig.model_validate(config))).run()
 
+            attempts.record(results)
             exception = results.exception_info.exception_type if results.exception_info else None
             if exception == "AgentTimeoutError":
                 # Masked, not retried, as the sibling does.
