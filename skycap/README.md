@@ -64,6 +64,100 @@ How a call reaches the model is built inside from those options. An engine
 with another wire passes `engine=` (a `skycap.tokens.engine.VLLMEngine`
 subclass), which is the one piece an embedder supplies.
 
+## Expose a server to remote harnesses
+
+A harness that runs outside the server's network, such as an agent inside a
+remote sandbox (Daytona, Modal), can't reach the server's own URL. With an
+exposure, the server listens a second time with the harness routes alone
+(`/t/{id}/v1/chat/completions` and `/models`; no control plane is routed
+there), and the exposure makes that listener reachable:
+
+```bash
+# A Cloudflare quick tunnel: outbound internet only, no account, development only.
+uv run skycap serve --upstream-url http://engine:8000/v1 --expose cloudflare
+# An address the sandboxes route to: this node's, or a relay's (frp on a public VM) forwarding the port here.
+uv run skycap serve --upstream-url http://engine:8000/v1 \
+  --expose external_host --expose-kwargs '{"host": "203.0.113.7", "port": 11500}'
+```
+
+There is one exposed URL per server: the server opens its exposure once, when
+it starts. A trajectory's route on it is that URL plus the trajectory's own
+path, `/t/{id}/v1`, so `create` returns it with the trajectory, as
+`exposed_base_url` beside `base_url`. The id in the path tells trajectories
+apart there, exactly as on the server's own URL.
+
+```mermaid
+flowchart LR
+  subgraph net["Trainer network"]
+    driver["driver"]
+    subgraph server["skycap server"]
+      control["control plane"]
+      harness["harness app"]
+    end
+    model["model"]
+    cloudflared["cloudflared"]
+  end
+  edge["Cloudflare"]
+  subgraph sandbox["Remote sandbox"]
+    agent["agent"]
+  end
+  driver -->|"1 create"| control
+  driver -->|"2 exposed_base_url"| agent
+  agent -->|"3 chat call"| edge
+  edge -->|"4"| cloudflared
+  cloudflared -->|"5"| harness
+  harness -->|"6"| model
+  driver -->|"7 finish"| control
+```
+
+1. The driver creates a trajectory on the server's own URL and gets its `exposed_base_url`.
+2. It hands that URL to the agent in the remote sandbox.
+3. The agent calls it, which reaches Cloudflare.
+4. Cloudflare forwards the call over the tunnel `cloudflared` dialed out from the trainer network.
+5. `cloudflared` hands it to the server's harness app, which serves the harness routes and nothing else.
+6. skycap records the call and gets the reply from the model.
+7. The driver finishes the trajectory on the server's own URL and gets the training samples.
+
+```python
+from skycap import CapturePool, CaptureService
+from skycap.exposure import load_exposure
+
+service = CaptureService(
+    "http://engine:8000", mode="tokens", tokenizer="Qwen/Qwen3-8B",
+    record_dir="./record", exposure=load_exposure("cloudflare"),
+)
+url = service.start()            # returns once the tunnel is up
+service.exposed_url              # https://<random>.trycloudflare.com
+
+async with CapturePool([url]) as pool:
+    async with pool.trajectory({"task": "t1"}) as trajectory:
+        trajectory.base_url          # http://10.0.0.5:41234/t/tr_.../v1, in this network
+        trajectory.exposed_base_url  # https://<random>.trycloudflare.com/t/tr_.../v1, from anywhere
+        await run_agent_in_sandbox(base_url=trajectory.exposed_base_url)  # any OpenAI client
+        result = await trajectory.finish({"reward": 1.0})
+
+service.stop()                   # closes the tunnel, then writes what is still in memory
+```
+
+| `--expose` | Reached at | Limits |
+| --- | --- | --- |
+| `cloudflare` | a random `https://*.trycloudflare.com` URL | development only: at most 200 requests in flight per tunnel (more get 429), a response that hasn't started within ~125 s gets 524, no SLA. Adds ~20 ms per call. |
+| `external_host` | `http://{host}:{port}` | plain HTTP; the address has to route to this node |
+| `pkg.module:Class` | whatever the class returns | an `skycap.exposure.Exposure` subclass, built with `--expose-kwargs` |
+
+A custom way in implements three methods; the server binds the listener at
+`bind()`, calls `start` once it serves, and `stop` before it stops:
+
+```python
+class Exposure:
+    def bind(self) -> tuple[str, int]: ...      # default: a free loopback port, for a tunnel
+    def start(self, harness_url: str) -> str: ... # make harness_url reachable; return the URL callers use
+    def stop(self) -> None: ...
+```
+
+cloudflared is taken from `PATH` or downloaded once (Linux), and is tied to the
+server's process: it stops when that process exits, however it exits.
+
 ## Capture a rollout
 
 ```python
