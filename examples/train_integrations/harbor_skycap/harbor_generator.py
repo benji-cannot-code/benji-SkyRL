@@ -9,8 +9,8 @@ context graph, so a rewritten history is a branch rather than a hole and
 summarization is allowed.
 
 Per trial: create a trajectory, point the agent at ``trajectory.base_url``, run
-it, and ``finish`` with the reward to get one sample per path. ``compose``
-turns those into the step-wise ``GeneratorOutput``.
+it, and ``finish`` with the reward to get a sample per path the ``train_paths``
+rule picks. ``compose`` turns those into the step-wise ``GeneratorOutput``.
 """
 
 import asyncio
@@ -22,7 +22,8 @@ import litellm
 from harbor.models.trial.config import TrialConfig
 from harbor.trial.trial import Trial
 from loguru import logger
-from skycap import CapturePool
+from skycap import CapturePool, PathRuleError
+from skycap.paths import load_rule
 from tqdm import tqdm
 
 from skyrl.backends.skyrl_train.inference_servers.base import ConversationType
@@ -54,6 +55,7 @@ class HarborSkycapGenerator(GeneratorInterface):
         harbor_cfg: Dict[str, Any],
         capture_urls: List[str],
         inference_engine_client: Any = None,
+        train_paths: str = "all",
     ) -> None:
         """
         Args:
@@ -61,7 +63,12 @@ class HarborSkycapGenerator(GeneratorInterface):
             harbor_cfg: Harbor's ``TrialConfig`` template.
             capture_urls: the skycap servers to spread trajectories over.
             inference_engine_client: read for its ``weight_version``, which keys the prefix-cache salt.
+            train_paths: the skycap path rule every trajectory is finished with: ``all``, ``final``, or a custom
+                rule's ``"pkg.module:function"``, which the servers must have been started with.
         """
+        # Imported here too, so a bad import path fails at startup rather than at the first finish.
+        load_rule(train_paths)
+        self.train_paths = train_paths
         if not getattr(generator_cfg, "step_wise_trajectories", False):
             raise ValueError(
                 "HarborSkycapGenerator emits one row per captured path, grouped per rollout the step-wise way. "
@@ -152,7 +159,11 @@ class HarborSkycapGenerator(GeneratorInterface):
         step: Optional[int],
         attempts: TrialAttempts,
     ) -> TrialOutcome:
-        """One rollout, retried on unknown errors. Never raises: one failure must not cancel the batch."""
+        """One rollout, retried on unknown errors. Never raises: one failure must not cancel the batch.
+
+        A path rule that raises is not retried: the rule runs on what the trial captured, so another run of the
+        trial would mostly pay for the sandbox and the agent again to fail the same way. The rollout is masked.
+        """
         started = time.monotonic()
         missing_routes = False
         for attempt in range(MAX_NUM_RETRIES_PER_TRIAL):
@@ -160,6 +171,10 @@ class HarborSkycapGenerator(GeneratorInterface):
             attempts.start()
             try:
                 outcome = await self._attempt(prompt, trajectory_id, cache_salt, step, attempt, attempts)
+            except PathRuleError as error:
+                logger.error(f"{prefix}: path rule {self.train_paths!r} failed, not retrying: {error}")
+                attempts.fail(error)
+                break
             except Exception as error:  # noqa: BLE001 - retried, then masked
                 logger.warning(f"{prefix} failed: {type(error).__name__}: {error}")
                 attempts.fail(error)
@@ -193,7 +208,7 @@ class HarborSkycapGenerator(GeneratorInterface):
             "step": step,
             "attempt": attempt,
         }
-        async with self.pool.trajectory(meta) as trajectory:
+        async with self.pool.trajectory(meta, paths=self.train_paths) as trajectory:
             config = self._trial_config(prompt, trajectory.base_url, cache_salt)
             async with self._rate_limiter:
                 results = await (await Trial.create(TrialConfig.model_validate(config))).run()
