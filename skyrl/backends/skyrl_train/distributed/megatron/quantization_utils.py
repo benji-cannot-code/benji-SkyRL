@@ -8,13 +8,10 @@ AUTO_FP8_RECIPE = "auto"
 
 
 def fp8_exclude_recipe(exclude_modules: Sequence[str]) -> dict:
-    """Return a Megatron per-module recipe that trains the matched modules in BF16.
+    """Build a Megatron per-module precision recipe that keeps the given modules in BF16.
 
-    Uses the ``configs``/``matchers`` layout of Megatron's
-    ``--te-precision-config-file``, for ``RecipeConfig.from_config_dict``.
-    Matched modules get a recipe with no quantization, which runs them in BF16
-    and stores their parameters in BF16; every other module keeps the global
-    FP8 recipe.
+    Input is list of globs over Megatron module names, such as
+    ``["decoder.layers.0.*", "*.mlp.linear_fc2"]``
     """
     return {
         "configs": {
