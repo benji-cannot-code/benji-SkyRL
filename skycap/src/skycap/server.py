@@ -1,6 +1,6 @@
 """The capture server: a control plane plus one OpenAI-compatible route per trajectory.
 
-    POST /trajectories                    {meta}                -> {id, base_url[, exposed_base_url]}
+    POST /trajectories                    {meta}                -> {id, base_url, api_key[, exposed_base_url]}
     POST /trajectories/{id}/finish        {annotations, paths}  -> {status, samples}
     GET  /trajectories/{id}                                      -> the trajectory document
     POST /t/{id}/v1/chat/completions                             (the harness)
@@ -8,6 +8,11 @@
     GET  /healthz
 
 A trajectory's route is its URL: the harness needs no header and no SDK patch.
+Each trajectory also gets an API key of its own, minted at ``create``. With
+``require_api_key``, its harness routes answer only a caller that sends it the
+way any OpenAI client sends its key (``Authorization: Bearer <api_key>``), so a
+route reachable from outside (a sandbox, a tunnel) can't be written to by anyone
+who merely learns the URL. The key is never recorded.
 ``finish`` seals the trajectory: in-flight calls are cancelled and never
 committed, so its samples are final the moment they are returned. ``paths``
 names the path rule that picks them (``skycap.paths``): ``all`` (default),
@@ -28,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import logging
 import time
 from collections.abc import Mapping
@@ -41,7 +47,7 @@ from skycap import record
 from skycap.openai_chat import ChatRequest, RequestError, error_body, parse_request
 from skycap.paths import PATH_RULE_FAILED, PathRule, Row, rule_registry
 from skycap.samples import Sample, build_samples, samples_for
-from skycap.trajectory import Status, Trajectory, new_trajectory_id
+from skycap.trajectory import Status, Trajectory, new_api_key, new_trajectory_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +83,11 @@ class CaptureServer:
         ttl: float = 3600.0,
         sweep_interval: float = 60.0,
         path_rules: Mapping[str, PathRule | str] | None = None,
+        require_api_key: bool = False,
     ) -> None:
         self.backend = backend
+        #: Whether the harness routes check the trajectory's own key.
+        self.require_api_key = require_api_key
         #: The rules ``finish`` accepts, by name: the built-in ones plus ``path_rules``, each given as a
         #: function or as its ``"pkg.module:function"`` import path.
         self.path_rules = rule_registry(path_rules)
@@ -263,11 +272,13 @@ class CaptureServer:
         meta = body.get("meta") if isinstance(body, dict) else None
         if meta is not None and not isinstance(meta, dict):
             return _json({"error": "`meta` must be an object"}, 400)
-        trajectory = Trajectory(id=new_trajectory_id(), meta=meta or {}, capture=self.backend.describe())
+        trajectory = Trajectory(
+            id=new_trajectory_id(), meta=meta or {}, capture=self.backend.describe(), api_key=new_api_key()
+        )
         self.trajectories[trajectory.id] = trajectory
         # The route is on the host the pool reached us at: harnesses reach it the same way.
         base = f"{request.scheme}://{request.host}"
-        created = {"id": trajectory.id, "base_url": f"{base}/t/{trajectory.id}/v1"}
+        created = {"id": trajectory.id, "base_url": f"{base}/t/{trajectory.id}/v1", "api_key": trajectory.api_key}
         if self.exposed_url is not None:
             created["exposed_base_url"] = f"{self.exposed_url}/t/{trajectory.id}/v1"
         return _json(created)
@@ -325,8 +336,14 @@ class CaptureServer:
     # -- data plane -------------------------------------------------------------
     async def models(self, request: web.Request) -> web.Response:
         trajectory_id = request.match_info["id"]
-        if trajectory_id not in self.trajectories:
+        trajectory = self.trajectories.get(trajectory_id)
+        if trajectory is None:
             return self._ended_or_unknown(trajectory_id)
+        # Ended first: an ended trajectory answers 410 whatever key is sent, and its key opens nothing more.
+        if not trajectory.is_open:
+            return _openai_error(f"trajectory is {trajectory.status}", 410, code="trajectory_closed")
+        if not self._authorized(trajectory, request):
+            return _unauthorized()
         return await self.backend.models(request)
 
     async def chat(self, request: web.Request) -> web.StreamResponse:
@@ -336,6 +353,8 @@ class CaptureServer:
             return self._ended_or_unknown(trajectory_id)
         if not trajectory.is_open:
             return _openai_error(f"trajectory is {trajectory.status}", 410, code="trajectory_closed")
+        if not self._authorized(trajectory, request):
+            return _unauthorized()
         # In flight from here on, so a finish that lands during the body read cancels this call.
         task = asyncio.current_task()
         assert task is not None
@@ -354,6 +373,20 @@ class CaptureServer:
             trajectory.inflight.discard(task)
             trajectory.touch()
 
+    def _authorized(self, trajectory: Trajectory, request: web.Request) -> bool:
+        """Whether the call carries this trajectory's key, or no key is required."""
+        if not self.require_api_key:
+            return True
+        if trajectory.api_key is None:
+            return False
+        parts = request.headers.get("Authorization", "").split(maxsplit=1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return False
+        # Bytes: compare_digest refuses str with non-ASCII characters, which a caller controls. aiohttp keeps
+        # header bytes that aren't UTF-8 as surrogates; surrogateescape turns them back into those bytes.
+        given = parts[1].strip().encode("utf-8", "surrogateescape")
+        return hmac.compare_digest(given, trajectory.api_key.encode())
+
     def _start(
         self, trajectory: Trajectory, request: web.Request, chat: ChatRequest, raw: bytes
     ) -> asyncio.Future[web.StreamResponse]:
@@ -362,6 +395,10 @@ class CaptureServer:
         trajectory.inflight.add(work)
         work.add_done_callback(trajectory.inflight.discard)  # type: ignore[arg-type]
         return work
+
+
+def _unauthorized() -> web.Response:
+    return _openai_error("this trajectory's api_key is required", 401, code="invalid_api_key")
 
 
 def _changes(current: dict[str, Any], update: dict[str, Any] | None) -> bool:
