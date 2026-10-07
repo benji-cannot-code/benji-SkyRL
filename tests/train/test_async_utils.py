@@ -4,7 +4,11 @@ import asyncio
 
 import pytest
 
-from skyrl.train.utils.async_utils import BackgroundFailure, cancel_background_tasks
+from skyrl.train.utils.async_utils import (
+    BackgroundFailure,
+    cancel_background_tasks,
+    cleanup_preserving_primary,
+)
 
 # --------------------------------------------------------------------------------------
 # BackgroundFailure
@@ -83,3 +87,74 @@ async def test_cancel_background_tasks_bounds_an_unresponsive_task():
     assert not task.done()
     release.set()
     await asyncio.wait_for(task, timeout=1)
+
+
+# --------------------------------------------------------------------------------------
+# cleanup_preserving_primary
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cleanup_error_propagates_on_success():
+    async def failing_cleanup():
+        raise ConnectionError("engine unreachable")
+
+    with pytest.raises(ConnectionError):
+        async with cleanup_preserving_primary(failing_cleanup, "resume_generation"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_cleanup_runs_on_cancel():
+    calls = []
+
+    async def cleanup():
+        calls.append("cleanup")
+
+    started = asyncio.Event()
+
+    async def body():
+        async with cleanup_preserving_primary(cleanup, "resume_generation"):
+            started.set()
+            await asyncio.sleep(3600)
+
+    task = asyncio.create_task(body())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls == ["cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_timeout_preserves_primary():
+    cleanup_cancelled = asyncio.Event()
+
+    async def hanging_cleanup():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_cancelled.set()
+
+    primary = RuntimeError("weight transfer failed")
+    with pytest.raises(RuntimeError) as exc_info:
+        async with cleanup_preserving_primary(hanging_cleanup, "resume_generation", failure_grace_s=0.01):
+            raise primary
+
+    assert exc_info.value is primary
+    assert cleanup_cancelled.is_set()
+    assert "resume_generation did not finish during cleanup within 0.01s" in primary.__notes__
+
+
+@pytest.mark.asyncio
+async def test_cleanup_timeout_error_is_recorded_as_cleanup_failure():
+    async def failing_cleanup():
+        raise TimeoutError("server request timed out")
+
+    primary = RuntimeError("weight transfer failed")
+    with pytest.raises(RuntimeError) as exc_info:
+        async with cleanup_preserving_primary(failing_cleanup, "resume_generation"):
+            raise primary
+
+    assert exc_info.value is primary
+    assert "resume_generation also failed during cleanup: TimeoutError('server request timed out')" in primary.__notes__
