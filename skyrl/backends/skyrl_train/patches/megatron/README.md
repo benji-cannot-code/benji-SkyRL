@@ -20,7 +20,7 @@ Tests for this folder mirror its layout, so they are found and deleted together 
 |---|---|
 | `patches/megatron/mcore_ext/test_dsa_kpool_math.py` (CPU) | `mcore_ext/dsa_kpool.py` key compression vs HF |
 | `patches/megatron/mcore_ext/test_hyper_connection_proj_rms.py` (CPU) | `mcore_ext/hyper_connection.py` projection: bitwise vs plain autograd, no saved FP32 copy |
-| `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` | `mcore_ext/dsa_kpool.py` pooled top-k selection |
+| `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` | `mcore_ext/dsa_kpool.py` pooled top-k selection, query chunking |
 | `gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py` | `mcore_ext/kda.py`, `mcore_ext/hyper_connection.py` vs HF |
 | `gpu_ci/patches/megatron/test_dsa_index_share_recompute.py` | `patch_dsa_index_share.py` |
 | `gpu_ci/patches/megatron/test_shared_expert_lora_tp.py` | `patch_shared_expert_lora_tp.py` |
@@ -114,7 +114,17 @@ This is the riskiest entry. A wrong k-pool selection doesn't raise. It silently 
 different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (2048).
 
 - **Carried as:**
-  - `mcore_ext/dsa_kpool.py`: the six k-pool kernels, copied verbatim from #7522.
+  - `mcore_ext/dsa_kpool.py`: the six k-pool kernels, copied from #7522. One deliberate
+    deviation: `fused_qk_topk_kpool` scores and selects in query chunks. Verbatim, it
+    materializes FP32 `[sq, b, heads, sq / kpool]` per-head scores (32 GiB/GPU at 32k), so
+    GLM-5.3-Flash can't train past ~16k. Top-k is per query row, so chunking is exact
+    (`test_kpool_query_chunking_is_exact`); `SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS` sets the chunk
+    cap (default 2 GiB of FP32 scores). Past one chunk the loop follows #7522 @ `b27efd8`, which
+    now chunks too: no-grad, in-place ReLU and head weighting, one FP32 cast of the pooled keys, a
+    preallocated selection. Upstream's cap is a fixed 256 MiB; at 512k (65,536 query rows per TP8
+    rank x 131,072 pools, one B200) one selection takes 3.31 s there vs 2.64 s at 2 GiB and
+    2.60 s at 8 GiB, with peak extra memory 0.6 / 2.4 / 8.6 GiB. When removing, carry the
+    configurable cap over unless upstream's default has grown.
   - `glm5_next/dsa.py`:
     - `Glm5NextDSAIndexer`: k-pool gate/ape parameters and the gate score, hand-merged onto the
       pinned `DSAIndexer`;
