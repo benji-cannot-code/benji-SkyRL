@@ -19,7 +19,7 @@ from skyrl.train.config import SkyRLTrainConfig
 def test_serialized_fp8_weight_sync_defaults_configure_vllm_checkpoint_fp8(monkeypatch):
     import skyrl.backends.skyrl_train.inference_servers.utils as inference_utils
 
-    monkeypatch.setattr(inference_utils, "_serialized_fp8_ignored_layers", lambda *_args: [])
+    monkeypatch.setattr(inference_utils, "_serialized_fp8_engine_exclude_list", lambda *_args: [])
     cfg = SkyRLTrainConfig()
     ie_cfg = cfg.generator.inference_engine
     ie_cfg.fp8_weight_sync_mode = "blockwise"
@@ -47,7 +47,7 @@ def test_serialized_fp8_weight_sync_defaults_configure_vllm_checkpoint_fp8(monke
 def test_serialized_fp8_weight_sync_rejects_conflicting_vllm_settings(engine_kwargs, monkeypatch):
     import skyrl.backends.skyrl_train.inference_servers.utils as inference_utils
 
-    monkeypatch.setattr(inference_utils, "_serialized_fp8_ignored_layers", lambda *_args: [])
+    monkeypatch.setattr(inference_utils, "_serialized_fp8_engine_exclude_list", lambda *_args: [])
     cfg = SkyRLTrainConfig()
     cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
 
@@ -76,7 +76,7 @@ def test_serialized_fp8_replaces_a_user_quantization_config(user_quantization_co
     """FP8 weight sync owns the engine's quantization config: it must describe exactly what the trainer sends."""
     import skyrl.backends.skyrl_train.inference_servers.utils as inference_utils
 
-    monkeypatch.setattr(inference_utils, "_serialized_fp8_ignored_layers", lambda *_args: [])
+    monkeypatch.setattr(inference_utils, "_serialized_fp8_engine_exclude_list", lambda *_args: [])
     cfg = SkyRLTrainConfig()
     cfg.generator.inference_engine.fp8_weight_sync_mode = "blockwise"
     engine_kwargs = {"hf_overrides": {"quantization_config": user_quantization_config}}
@@ -206,7 +206,7 @@ def test_serialized_fp8_threads_the_wire_format_into_the_ignore_list(monkeypatch
     seen = []
     monkeypatch.setattr(
         inference_utils,
-        "_serialized_fp8_ignored_layers",
+        "_serialized_fp8_engine_exclude_list",
         lambda _model_path, wire_format, _exclude_modules: seen.append(wire_format) or [],
     )
     cfg = SkyRLTrainConfig()

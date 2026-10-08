@@ -1268,11 +1268,11 @@ class InferenceEngineConfig(BaseConfig):
     ``["*.layers.0.*", "*.layers.39.*"]`` (first and last layer of a 40-layer model),
     ``["*.mlp.shared_expert.*"]``, ``["*.layers.3.mlp.experts"]``.
 
-    SkyRL expands the patterns against the model spec with one function, used both for the vLLM
-    engine's ignore list and for the weights the trainer quantizes, so the two always agree. A
-    pattern must match at least one module the model spec syncs as FP8, and modules vLLM fuses
+    SkyRL uses this for both the vLLM engine initialization and weight sync, so the two steps are always
+    in sync. A pattern must match at least one module the model spec syncs as FP8. Modules vLLM fuses
     into one must be excluded together (for Qwen3.5: ``q_proj``/``k_proj``/``v_proj``,
-    ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``). Requires ``fp8_weight_sync_mode``."""
+    ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``), or vLLM fails at engine init.
+    Requires ``fp8_weight_sync_mode``."""
     run_engines_locally: bool = True
     """Launch inference servers during the training run in the current Ray cluster.
     When ``False``, point SkyRL at an external HTTP/vLLM deployment via ``external_proxy_url`` and/or

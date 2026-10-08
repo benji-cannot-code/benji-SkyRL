@@ -20,7 +20,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import MXFP8_GROUP_SIZE
 # Linear modules synced as FP8, by the part of a decoder layer that holds them.
 _QWEN35_FP8_ATTENTION_MODULES = {
     "full_attention": ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj"),
-    # in_proj_b / in_proj_a stay BF16; see the ignored layers below.
+    # in_proj_b / in_proj_a stay BF16; see the base exclude list below.
     "linear_attention": ("linear_attn.in_proj_qkv", "linear_attn.in_proj_z", "linear_attn.out_proj"),
 }
 _QWEN35_FP8_DENSE_MLP_MODULES = ("mlp.gate_proj", "mlp.up_proj", "mlp.down_proj")
@@ -44,12 +44,6 @@ _QWEN35_FP8_WEIGHT_SUFFIXES = tuple(
 _QWEN35_MOE_EXPERTS_MODULE = "mlp.experts"
 _QWEN35_MOE_GATE_UP_SUFFIX = f".{_QWEN35_MOE_EXPERTS_MODULE}.gate_up_proj"
 _QWEN35_MOE_DOWN_SUFFIX = f".{_QWEN35_MOE_EXPERTS_MODULE}.down_proj"
-# HF siblings vLLM fuses into qkv_proj, gate_up_proj and in_proj_qkvz.
-_QWEN35_FUSED_MODULES = (
-    ("q_proj", "k_proj", "v_proj"),
-    ("gate_proj", "up_proj"),
-    ("in_proj_qkv", "in_proj_z"),
-)
 _QWEN35_UNQUANTIZED_LINEAR_SUFFIXES = (
     ".in_proj_b",
     ".in_proj_a",
@@ -90,7 +84,7 @@ def is_qwen35_config(hf_config: Any) -> bool:
     return model_type in {"qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text"}
 
 
-def get_qwen35_fp8_ignored_layers(
+def get_qwen35_base_exclude_list(
     hf_config: Any,
     wire_format: str = BLOCKWISE_FP8,
     model_prefix: str = "model",
@@ -214,10 +208,9 @@ QWEN35_FP8_SPEC = register_fp8_spec(
         name="qwen3.5",
         matches=is_qwen35_config,
         should_quantize=is_quantizable_weight_shape,
-        ignored_layers=get_qwen35_fp8_ignored_layers,
+        base_exclude_list=get_qwen35_base_exclude_list,
         fp8_modules=get_qwen35_fp8_modules,
         moe_expert_spec=batched_moe_expert_spec,
-        fused_modules=_QWEN35_FUSED_MODULES,
         moe_projections=(_MOE_GATE, _MOE_UP, _MOE_DOWN),
     )
 )

@@ -425,7 +425,7 @@ def test_megatron_bf16_layer_counts_fold_into_first_last_layers_bf16():
 def test_megatron_rejects_two_per_module_precision_sources():
     from skyrl.train.config.config import MegatronConfig
 
-    with pytest.raises(ValueError, match="set one"):
+    with pytest.raises(ValueError, match="only use one"):
         MegatronConfig(fp8_exclude_modules=["*.shared_experts.*"], te_precision_config_file="/tmp/recipe.yaml")
 
 

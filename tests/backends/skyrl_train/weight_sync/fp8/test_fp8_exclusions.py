@@ -1,7 +1,7 @@
 """User FP8 exclusions (``fp8_weight_sync_exclude_modules``) on top of the Qwen3.5 spec.
 
-One expansion (``resolve_excluded_modules``) feeds both the engine's ignore list and
-the sender. These tests cover the expansion, each of its two consumers, and the
+One expansion (``resolve_user_provided_exclude_list``) feeds both the engine's exclude
+list and the sender. These tests cover the expansion, each of its two consumers, and the
 stream-level check that catches exclusions the trainer's export does not contain.
 """
 
@@ -15,11 +15,11 @@ from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     MXFP8,
     SKYRL_BATCHED_MOE_FP8_PREFIX,
     SerializedFp8Config,
-    fp8_ignored_layers,
+    engine_exclude_list,
     iter_serialized_fp8_tensors,
     iter_serialized_fp8_weights,
-    resolve_excluded_modules,
     resolve_serialized_fp8_config,
+    resolve_user_provided_exclude_list,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8.models import QWEN35_FP8_SPEC
 
@@ -39,7 +39,9 @@ def _moe_vl_config():
 
 
 def _config(*excluded, wire_format=BLOCKWISE_FP8):
-    return SerializedFp8Config(spec=QWEN35_FP8_SPEC, wire_format=wire_format, excluded_modules=frozenset(excluded))
+    return SerializedFp8Config(
+        spec=QWEN35_FP8_SPEC, wire_format=wire_format, user_provided_exclude_list=frozenset(excluded)
+    )
 
 
 def test_fp8_modules_use_the_bridge_export_names():
@@ -81,7 +83,7 @@ def test_fp8_modules_skip_a_shared_expert_without_width():
 
 
 def test_exclusions_expand_globs_in_layer_order():
-    excluded = resolve_excluded_modules(
+    excluded = resolve_user_provided_exclude_list(
         QWEN35_FP8_SPEC, _moe_vl_config(), ["*.layers.3.self_attn.*", "*.layers.1.mlp.experts"]
     )
 
@@ -104,20 +106,14 @@ def test_exclusions_expand_globs_in_layer_order():
 )
 def test_exclusions_reject_a_pattern_that_matches_no_fp8_module(pattern):
     with pytest.raises(ValueError, match="matches none"):
-        resolve_excluded_modules(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern])
+        resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern])
 
 
-@pytest.mark.parametrize("pattern", ["*.layers.3.self_attn.q_proj", "*.layers.0.linear_attn.in_proj_z"])
-def test_exclusions_reject_part_of_a_fused_module(pattern):
-    with pytest.raises(ValueError, match="must be excluded together"):
-        resolve_excluded_modules(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern])
-
-
-def test_excluded_modules_extend_the_engine_ignore_list():
+def test_user_provided_exclude_list_extends_the_base_exclude_list():
     hf_config = _moe_vl_config()
     excluded = (f"{LM}.1.mlp.experts", f"{LM}.2.linear_attn.out_proj")
 
-    assert fp8_ignored_layers(QWEN35_FP8_SPEC, hf_config, MXFP8, excluded) == QWEN35_FP8_SPEC.ignored_layers(
+    assert engine_exclude_list(QWEN35_FP8_SPEC, hf_config, MXFP8, excluded) == QWEN35_FP8_SPEC.base_exclude_list(
         hf_config, MXFP8
     ) + [
         f"{LM}.1.mlp.experts.0.gate_proj",
@@ -184,5 +180,7 @@ def test_sender_config_resolves_the_same_exclusions_as_the_engine():
 
     config = resolve_serialized_fp8_config(MXFP8, hf_config, ["*.layers.3.*"])
 
-    assert config.excluded_modules == set(resolve_excluded_modules(QWEN35_FP8_SPEC, hf_config, ["*.layers.3.*"]))
-    assert f"{LM}.3.mlp.experts" in config.excluded_modules
+    assert config.user_provided_exclude_list == set(
+        resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, hf_config, ["*.layers.3.*"])
+    )
+    assert f"{LM}.3.mlp.experts" in config.user_provided_exclude_list

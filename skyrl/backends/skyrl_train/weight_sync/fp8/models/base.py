@@ -10,10 +10,11 @@ projections via ``batched_moe_wire_targets``, so sender and receiver share
 one source of truth instead of hardcoding the mapping twice.
 
 User exclusions (``fp8_weight_sync_exclude_modules``) are layered on top of
-the spec: ``resolve_excluded_modules`` expands them into module names. The
-driver (for the engine's ignore list, ``fp8_ignored_layers``) and every
-trainer rank (for the sender, ``SerializedFp8Config.excluded_modules``) call
-it on the same config, so both sides see the same modules.
+the spec's ``base_exclude_list``: ``resolve_user_provided_exclude_list``
+expands them into module names. The driver (for the engine,
+``engine_exclude_list``) and every trainer rank (for the sender,
+``SerializedFp8Config.user_provided_exclude_list``) call it on the same
+config, so both sides see the same modules.
 """
 
 from __future__ import annotations
@@ -71,17 +72,15 @@ class ModelFp8Spec:
     matches: Callable[[Any], bool]
     # (hf_name, shape, wire_format) -> serialize this exported weight as FP8?
     should_quantize: Callable[[str, Sequence[int], str], bool]
-    # (hf_config, wire_format) -> vLLM module prefixes that must stay unquantized
-    ignored_layers: Callable[[Any, str], list[str]]
+    # (hf_config, wire_format) -> modules the engine always builds unquantized, before
+    # any user exclusions; vLLM matches these names as module prefixes
+    base_exclude_list: Callable[[Any, str], list[str]]
     # hf_config -> HF module names synced as FP8, as Megatron-Bridge exports them;
     # a layer's routed experts are one entry whose last segment is moe_module.
     # User exclusion globs match against these names.
     fp8_modules: Callable[[Any], list[str]]
     # batched expert tensor name -> MoeExpertSpec, or None if not one
     moe_expert_spec: Callable[[str], Optional[MoeExpertSpec]]
-    # sibling module names vLLM fuses into one quantized module, e.g.
-    # ("q_proj", "k_proj", "v_proj"); exclusions must cover a group entirely
-    fused_modules: tuple[tuple[str, ...], ...] = field(default=())
     # module segment holding routed experts in vLLM parameter names
     moe_module: str = "experts"
     # every projection the model emits, for receiver-side target derivation
@@ -113,13 +112,29 @@ def resolve_fp8_spec(hf_config: Any) -> Optional[ModelFp8Spec]:
     return None
 
 
-def resolve_excluded_modules(spec: ModelFp8Spec, hf_config: Any, patterns: Sequence[str]) -> tuple[str, ...]:
-    """Expand exclusion globs into the FP8 modules they keep unquantized.
+def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patterns: Sequence[str]) -> tuple[str, ...]:
+    """Expand the user's exclusion globs into the HF module names they keep unquantized.
 
-    Each glob is matched (``fnmatch``) against ``spec.fp8_modules(hf_config)``.
-    A glob that matches none of them is rejected, and so is an exclusion that
-    covers only part of a group vLLM fuses into one module: vLLM serves the
-    fused module in a single precision, so the sender would ship it mixed.
+    Each glob is matched (``fnmatch``) against ``spec.fp8_modules(hf_config)``, the
+    modules the spec would otherwise sync as FP8. Siblings vLLM fuses into one module
+    (e.g. ``q_proj``/``k_proj``/``v_proj``) must be excluded together; vLLM rejects a
+    partial exclusion when the engine starts.
+
+    Args:
+        spec (ModelFp8Spec): The checkpoint's model spec.
+        hf_config (Any): The checkpoint's HF config.
+        patterns (Sequence[str]): HF module-name globs (``fp8_weight_sync_exclude_modules``),
+            e.g. ``["*.layers.3.mlp.*"]``.
+
+    Raises:
+        ValueError: A pattern matches none of the spec's FP8 modules.
+
+    Returns:
+        tuple[str, ...]: The matched module names in model order, without duplicates. On a
+            Qwen3.5 MoE checkpoint, ``["*.layers.3.mlp.*"]`` gives
+            ``("model.language_model.layers.3.mlp.experts",
+            "model.language_model.layers.3.mlp.shared_expert.gate_proj", ...)``; a layer's
+            routed experts are one name.
     """
 
     modules = spec.fp8_modules(hf_config)
@@ -133,29 +148,16 @@ def resolve_excluded_modules(spec: ModelFp8Spec, hf_config: Any, patterns: Seque
                 f"{len(modules)} modules {spec.name} syncs as FP8{example}."
             )
         excluded.update(matched)
-
-    ordered = tuple(module for module in modules if module in excluded)
-    for module in ordered:
-        parent, _, leaf = module.rpartition(".")
-        for group in spec.fused_modules:
-            if leaf not in group:
-                continue
-            missing = [f"{parent}.{name}" for name in group if f"{parent}.{name}" not in excluded]
-            if missing:
-                raise ValueError(
-                    f"fp8_weight_sync_exclude_modules excludes {module!r} but not {missing}: vLLM "
-                    f"serves {', '.join(group)} as one fused module, so they must be excluded together."
-                )
-    return ordered
+    return tuple(module for module in modules if module in excluded)
 
 
-def fp8_ignored_layers(
+def engine_exclude_list(
     spec: ModelFp8Spec,
     hf_config: Any,
     wire_format: str,
-    excluded_modules: Sequence[str],
+    user_provided_exclude_list: Sequence[str],
 ) -> list[str]:
-    """Return the modules the engine builds unquantized: the spec's own list plus the exclusions.
+    """Return the modules the engine builds unquantized: the spec's base list plus the user's.
 
     vLLM picks one scheme for all of a layer's routed experts. Its compressed-tensors
     config (MXFP8) decides from expert 0's projection names, matched exactly; its fp8
@@ -163,13 +165,13 @@ def fp8_ignored_layers(
     excluded experts module is therefore listed as expert 0's projections.
     """
 
-    ignored = list(spec.ignored_layers(hf_config, wire_format))
-    for module in excluded_modules:
-        if module.rpartition(".")[2] == spec.moe_module:
-            ignored.extend(f"{module}.0.{proj.hf_name}" for proj in spec.moe_projections)
+    exclude_list = list(spec.base_exclude_list(hf_config, wire_format))
+    for module in user_provided_exclude_list:
+        if module.rpartition(".")[2] == spec.moe_module: # TODO(benji): understand moe
+            exclude_list.extend(f"{module}.0.{proj.hf_name}" for proj in spec.moe_projections)
         else:
-            ignored.append(module)
-    return ignored
+            exclude_list.append(module)
+    return exclude_list
 
 
 def batched_moe_wire_targets() -> dict[str, tuple[str, str]]:

@@ -8,10 +8,9 @@ Serialized FP8 weight sync needs these model-specific answers, grouped in a
 | --- | --- |
 | `matches(hf_config)` | Does this spec support the checkpoint layout? |
 | `should_quantize(name, shape, wire_format)` | Should this exported HF weight be FP8 on the wire? (Linear weights yes; embeddings, norms, conv, router gates no.) |
-| `ignored_layers(hf_config, wire_format)` | Which vLLM module prefixes must stay unquantized to match the checkpoint-format stream? |
+| `base_exclude_list(hf_config, wire_format)` | Which modules does the engine always build unquantized, before any user exclusions, to match the checkpoint-format stream? |
 | `fp8_modules(hf_config)` | Which HF modules does the spec sync as FP8, named as Megatron-Bridge exports them? A MoE layer's routed experts are one entry (e.g. `model.language_model.layers.3.mlp.experts`). User exclusions match against this list. |
 | `moe_expert_spec(name)` | Is this a Megatron-Bridge *batched* expert tensor, and how does it map onto per-projection wire tensors? `None` for ordinary tensors. |
-| `fused_modules` | Which sibling modules does vLLM fuse into one quantized module (e.g. `q_proj`/`k_proj`/`v_proj`)? An exclusion must cover a whole group. |
 
 Everything else — blockwise casting, wire naming, the vLLM quantization
 config, the receiver's fused-MoE loading — is generic and lives outside this
@@ -22,19 +21,20 @@ projection loads into) is **derived** from the specs via
 ## User exclusions
 
 `generator.inference_engine.fp8_weight_sync_exclude_modules` keeps modules in
-the model dtype on top of the spec. `resolve_excluded_modules(spec, hf_config,
-patterns)` expands the globs against `fp8_modules`; both consumers call it on
-the same config, so they see the same modules:
+the model dtype on top of the spec. `resolve_user_provided_exclude_list(spec,
+hf_config, patterns)` expands the globs against `fp8_modules`; both consumers
+call it on the same config, so they see the same modules:
 
-- **engine init**: `fp8_ignored_layers` appends the excluded modules to
-  `ignored_layers` (an excluded experts module is listed as expert 0's
+- **engine init**: `engine_exclude_list` appends the user's modules to
+  `base_exclude_list` (an excluded experts module is listed as expert 0's
   projections, which is how vLLM decides a whole MoE layer);
-- **weight sync**: `SerializedFp8Config.excluded_modules` makes the sender
-  pass those weights through unquantized, and the stream raises if an excluded
-  module never appears in the trainer's export.
+- **weight sync**: `SerializedFp8Config.user_provided_exclude_list` makes the
+  sender pass those weights through unquantized, and the stream raises if an
+  excluded module never appears in the trainer's export.
 
-A pattern that matches no FP8 module, or that splits a `fused_modules` group,
-is rejected before the engine starts.
+A pattern that matches no FP8 module is rejected before the engine starts.
+Excluding only part of a module vLLM fuses (e.g. `q_proj` without `k_proj` and
+`v_proj`) is left to vLLM, which rejects it when the engine starts.
 
 ## Adding a new model
 
@@ -57,17 +57,16 @@ is rejected before the engine starts.
            name="mymodel",
            matches=is_mymodel_config,
            should_quantize=is_quantizable_weight_shape,
-           ignored_layers=get_mymodel_fp8_ignored_layers,
+           base_exclude_list=get_mymodel_base_exclude_list,
            fp8_modules=get_mymodel_fp8_modules,
            moe_expert_spec=batched_moe_expert_spec,
-           fused_modules=(("q_proj", "k_proj", "v_proj"), ("gate_proj", "up_proj")),
            moe_projections=(_MOE_GATE, _MOE_UP, _MOE_DOWN),
        )
    )
    ```
 
 4. Add tests mirroring `tests/backends/skyrl_train/weight_sync/fp8/
-   test_serialized_fp8.py` (quantize filter, ignored layers, MoE mapping) and
+   test_serialized_fp8.py` (quantize filter, base exclude list, MoE mapping) and
    `test_fp8_exclusions.py` / `test_fp8_exclusions_vllm.py` (exclusions, run
    through vLLM's own matching), and, for real coverage, an FP8 row in the
    GPU CI logprobs-roundtrip test.

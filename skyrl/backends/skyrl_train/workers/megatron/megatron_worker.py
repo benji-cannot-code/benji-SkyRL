@@ -333,7 +333,7 @@ class MegatronWorker:
         provider.moe_enable_routing_replay = megatron_config.moe_enable_routing_replay
 
         # Supply a quant recipe via either user-provided config file or derived config file
-        # from user-provided exclude list. 
+        # from user-provided exclude list.
         if megatron_config.te_precision_config_file:
             provider.quant_recipe = RecipeConfig.from_yaml_file(megatron_config.te_precision_config_file)
         elif megatron_config.fp8_exclude_modules:
