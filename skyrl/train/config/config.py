@@ -1269,9 +1269,10 @@ class InferenceEngineConfig(BaseConfig):
     ``["*.mlp.shared_expert.*"]``, ``["*.layers.3.mlp.experts"]``.
 
     SkyRL uses this for both the vLLM engine initialization and weight sync, so the two steps are always
-    in sync. A pattern must match at least one module the model spec syncs as FP8. Modules vLLM fuses
-    into one must be excluded together (for Qwen3.5: ``q_proj``/``k_proj``/``v_proj``,
-    ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``), or vLLM fails at engine init.
+    in sync. Patterns are matched only against modules the model spec syncs as FP8; a pattern that
+    matches none of them is ignored. Modules vLLM fuses into one must be excluded together (for
+    Qwen3.5: ``q_proj``/``k_proj``/``v_proj``, ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``),
+    or vLLM fails at engine init.
     Requires ``fp8_weight_sync_mode``."""
     run_engines_locally: bool = True
     """Launch inference servers during the training run in the current Ray cluster.

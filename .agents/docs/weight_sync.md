@@ -138,8 +138,7 @@ the spec's `fp8_modules`; the driver calls it for the engine (`engine_exclude_li
 spec's `base_exclude_list` plus the user's modules) and each trainer rank calls it for the
 sender (`SerializedFp8Config.user_provided_exclude_list`), on the same config, so the two
 cannot disagree. Patterns that match nothing are rejected before engine init; vLLM itself
-rejects excluding part of a fused module; `iter_serialized_fp8_weights` raises if an
-excluded module never appears in the export. Excluded routed experts go out as the
+rejects excluding part of a fused module. Excluded routed experts go out as the
 bridge's BF16 batched tensors through the model's own loader. The Megatron side has its
 own, independent knobs (`fp8_exclude_modules`, `num_layers_at_{start,end}_in_bf16`,
 `te_precision_config_file` on `MegatronConfig`); nothing checks the two sides against each

@@ -20,7 +20,7 @@ quantization config injected at engine boot, and the per-model ignore lists.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, Sequence
+from typing import Iterator, Sequence
 
 import torch
 
@@ -289,28 +289,3 @@ def iter_serialized_fp8_tensors(
         return
 
     yield name, tensor.to(dtype=target_dtype)
-
-
-def iter_serialized_fp8_weights(
-    weights: Iterable[tuple[str, torch.Tensor]],
-    config: SerializedFp8Config,
-) -> Iterator[tuple[str, torch.Tensor]]:
-    """Serialize a whole exported weight stream; unquantized weights keep their dtype.
-
-    Raises once the stream ends if an excluded module never appeared in it.
-    The engine builds every excluded module unquantized, so an exclusion that
-    names a module the export spells differently would otherwise ship FP8
-    weights into an unquantized parameter.
-    """
-
-    spec = config.require_spec()
-    unexported = set(config.user_provided_exclude_list)
-    for name, tensor in weights:
-        moe_spec = spec.moe_expert_spec(name)
-        unexported.discard(moe_spec.experts_base if moe_spec is not None else name.removesuffix(".weight"))
-        yield from iter_serialized_fp8_tensors(name, tensor, tensor.dtype, config)
-    if unexported:
-        raise ValueError(
-            f"FP8 weight sync excludes {len(unexported)} modules the trainer never exported, "
-            f"e.g. {sorted(unexported)[:3]}: the exclusions and the exported weight names disagree."
-        )

@@ -1,8 +1,7 @@
 """User FP8 exclusions (``fp8_weight_sync_exclude_modules``) on top of the Qwen3.5 spec.
 
 One expansion (``resolve_user_provided_exclude_list``) feeds both the engine's exclude
-list and the sender. These tests cover the expansion, each of its two consumers, and the
-stream-level check that catches exclusions the trainer's export does not contain.
+list and the sender. These tests cover the expansion and each of its two consumers.
 """
 
 from types import SimpleNamespace
@@ -17,7 +16,6 @@ from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     SerializedFp8Config,
     engine_exclude_list,
     iter_serialized_fp8_tensors,
-    iter_serialized_fp8_weights,
     resolve_serialized_fp8_config,
     resolve_user_provided_exclude_list,
 )
@@ -104,9 +102,18 @@ def test_exclusions_expand_globs_in_layer_order():
         "model.layers.0.*",  # the flat text spelling, on a VL checkpoint
     ],
 )
-def test_exclusions_reject_a_pattern_that_matches_no_fp8_module(pattern):
-    with pytest.raises(ValueError, match="matches none"):
-        resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern])
+def test_exclusions_ignore_a_pattern_that_matches_no_fp8_module(pattern):
+    assert resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern]) == ()
+
+
+def test_exclusions_keep_matches_when_another_pattern_matches_no_fp8_module():
+    excluded = resolve_user_provided_exclude_list(
+        QWEN35_FP8_SPEC,
+        _moe_vl_config(),
+        ["*.does_not_exist.*", "*.layers.1.mlp.experts"],
+    )
+
+    assert excluded == (f"{LM}.1.mlp.experts",)
 
 
 def test_user_provided_exclude_list_extends_the_base_exclude_list():
@@ -151,28 +158,6 @@ def test_sender_ships_excluded_routed_experts_as_the_batched_checkpoint_tensor()
         iter_serialized_fp8_tensors(f"{LM}.0.mlp.experts.gate_up_proj", gate_up, torch.bfloat16, _config(experts))
     )
     assert all(n.startswith(SKYRL_BATCHED_MOE_FP8_PREFIX) for n, _ in other_layer)
-
-
-def test_stream_rejects_an_exclusion_the_export_never_produced():
-    weights = [(f"{LM}.2.linear_attn.out_proj.weight", torch.randn(256, 256, dtype=torch.bfloat16))]
-
-    with pytest.raises(ValueError, match="never exported"):
-        list(iter_serialized_fp8_weights(weights, _config("model.layers.2.linear_attn.out_proj")))
-
-    serialized = list(iter_serialized_fp8_weights(weights, _config(f"{LM}.2.linear_attn.out_proj")))
-    assert [(n, t.dtype) for n, t in serialized] == [(weights[0][0], torch.bfloat16)]
-
-
-def test_stream_counts_batched_experts_as_their_experts_module():
-    experts = f"{LM}.1.mlp.experts"
-    weights = [
-        (f"{experts}.gate_up_proj", torch.randn(4, 256, 128, dtype=torch.bfloat16)),
-        (f"{experts}.down_proj", torch.randn(4, 128, 128, dtype=torch.bfloat16)),
-    ]
-
-    serialized = list(iter_serialized_fp8_weights(weights, _config(experts)))
-
-    assert [n for n, _ in serialized] == [name for name, _ in weights]
 
 
 def test_sender_config_resolves_the_same_exclusions_as_the_engine():

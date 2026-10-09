@@ -30,7 +30,6 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.vllm_format import (
     get_serialized_fp8_quantization_config,
     iter_batched_moe_expert_fp8_tensors,
     iter_serialized_fp8_tensors,
-    iter_serialized_fp8_weights,
     resolve_serialized_fp8_config,
     scale_name_for_weight,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "get_serialized_fp8_quantization_config",
     "iter_batched_moe_expert_fp8_tensors",
     "iter_serialized_fp8_tensors",
-    "iter_serialized_fp8_weights",
     "normalize_block_size",
     "register_fp8_spec",
     "registered_fp8_spec_names",

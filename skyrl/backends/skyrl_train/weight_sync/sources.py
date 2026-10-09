@@ -186,11 +186,17 @@ class SerializedFp8WeightSource(WeightSource):
 
     def _serialized(self) -> Iterator[Tuple[str, torch.Tensor]]:
         from skyrl.backends.skyrl_train.weight_sync.fp8 import (
-            iter_serialized_fp8_weights,
+            iter_serialized_fp8_tensors,
         )
 
-        for serialized_name, serialized_tensor in iter_serialized_fp8_weights(self._source, self._config):
-            yield serialized_name, serialized_tensor.detach().contiguous()
+        for name, tensor in self._source:
+            for serialized_name, serialized_tensor in iter_serialized_fp8_tensors(
+                name,
+                tensor,
+                tensor.dtype,
+                self._config,
+            ):
+                yield serialized_name, serialized_tensor.detach().contiguous()
 
     def metadata(self) -> List[ParamMeta]:
         if self._meta is None:

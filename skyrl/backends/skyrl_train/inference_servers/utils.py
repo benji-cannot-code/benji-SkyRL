@@ -81,10 +81,7 @@ def _apply_serialized_fp8_weight_sync_defaults(
 
     Wire-format-agnostic apart from ``wire_to_engine_quantization`` and the
     injected quantization config, both of which key off the concrete wire.
-    The quantization config is built entirely here, from the model spec and
-    ``fp8_weight_sync_exclude_modules``, so it describes exactly what the
-    trainer sends; a user-supplied ``hf_overrides.quantization_config`` is
-    replaced.
+    User-supplied ``quantization_config`` via HF overrides is ignored.
     """
 
     mode = ie_cfg.fp8_weight_sync_mode
@@ -111,7 +108,7 @@ def _apply_serialized_fp8_weight_sync_defaults(
 
     exclude_list = _serialized_fp8_engine_exclude_list(model_path, mode, ie_cfg.fp8_weight_sync_exclude_modules)
     logger.info(
-        "vLLM engine init (%s FP8 weights): %d modules are built unquantized "  # TODO(benji agent): is this the number of modules or layers? is modules an accurate description of this variable in this log?
+        "vLLM engine init (%s FP8 weights): %d names are built unquantized "
         "(the model spec's list plus fp8_weight_sync_exclude_modules=%s).",
         mode,
         len(exclude_list),

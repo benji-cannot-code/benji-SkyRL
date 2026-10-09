@@ -115,38 +115,25 @@ def resolve_fp8_spec(hf_config: Any) -> Optional[ModelFp8Spec]:
 def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patterns: Sequence[str]) -> tuple[str, ...]:
     """Expand the user's exclusion globs into the HF module names they keep unquantized.
 
-    Each glob is matched (``fnmatch``) against ``spec.fp8_modules(hf_config)``, the
-    modules the spec would otherwise sync as FP8. Siblings vLLM fuses into one module
-    (e.g. ``q_proj``/``k_proj``/``v_proj``) must be excluded together; vLLM rejects a
-    partial exclusion when the engine starts.
-
     Args:
         spec (ModelFp8Spec): The checkpoint's model spec.
         hf_config (Any): The checkpoint's HF config.
-        patterns (Sequence[str]): HF module-name globs (``fp8_weight_sync_exclude_modules``),
-            e.g. ``["*.layers.3.mlp.*"]``.
-
-    Raises:
-        ValueError: A pattern matches none of the spec's FP8 modules.
+        patterns (Sequence[str]): HF module-name globs such as ``["*.layers.3.mlp.*"]``.
 
     Returns:
         tuple[str, ...]: The matched module names in model order, without duplicates. On a
             Qwen3.5 MoE checkpoint, ``["*.layers.3.mlp.*"]`` gives
-            ``("model.language_model.layers.3.mlp.experts",
-            "model.language_model.layers.3.mlp.shared_expert.gate_proj", ...)``; a layer's
-            routed experts are one name.
+            ``(
+                "model.language_model.layers.3.mlp.experts",
+                "model.language_model.layers.3.mlp.shared_expert.gate_proj",
+                ...
+            )``
     """
 
     modules = spec.fp8_modules(hf_config)
     excluded: set[str] = set()
     for pattern in patterns:
         matched = [module for module in modules if fnmatch.fnmatchcase(module, pattern)]
-        if not matched:
-            example = f" (e.g. {modules[0]!r})" if modules else ""
-            raise ValueError(
-                f"fp8_weight_sync_exclude_modules pattern {pattern!r} matches none of the "
-                f"{len(modules)} modules {spec.name} syncs as FP8{example}."
-            )
         excluded.update(matched)
     return tuple(module for module in modules if module in excluded)
 
@@ -167,7 +154,7 @@ def engine_exclude_list(
 
     exclude_list = list(spec.base_exclude_list(hf_config, wire_format))
     for module in user_provided_exclude_list:
-        if module.rpartition(".")[2] == spec.moe_module: # TODO(benji): understand moe
+        if module.rpartition(".")[2] == spec.moe_module:
             exclude_list.extend(f"{module}.0.{proj.hf_name}" for proj in spec.moe_projections)
         else:
             exclude_list.append(module)
