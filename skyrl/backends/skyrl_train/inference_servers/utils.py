@@ -108,11 +108,9 @@ def _apply_serialized_fp8_weight_sync_defaults(
 
     exclude_list = _serialized_fp8_engine_exclude_list(model_path, mode, ie_cfg.fp8_weight_sync_exclude_modules)
     logger.info(
-        "vLLM engine init (%s FP8 weights): %d names are built unquantized "
-        "(the model spec's list plus fp8_weight_sync_exclude_modules=%s).",
+        "vLLM engine init (%s FP8 weights): %d names are built unquantized.",
         mode,
         len(exclude_list),
-        ie_cfg.fp8_weight_sync_exclude_modules or [],
     )
     hf_overrides["quantization_config"] = get_serialized_fp8_quantization_config(
         exclude_list=exclude_list,
