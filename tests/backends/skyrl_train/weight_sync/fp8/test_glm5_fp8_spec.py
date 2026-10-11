@@ -2,7 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from skyrl.backends.skyrl_train.weight_sync.fp8 import resolve_fp8_spec
+from skyrl.backends.skyrl_train.weight_sync.fp8 import (
+    resolve_fp8_spec,
+    resolve_user_provided_exclude_list,
+)
 from skyrl.backends.skyrl_train.weight_sync.fp8.models import GLM5_FP8_SPEC
 
 _LINEAR = (2048, 6144)
@@ -53,6 +56,13 @@ def test_glm5_bf16_weights_stay_unquantized(name):
 def test_glm5_spec_has_no_batched_experts_or_base_exclusions():
     assert GLM5_FP8_SPEC.moe_expert_spec("model.layers.3.mlp.experts.gate_up_proj") is None
     assert GLM5_FP8_SPEC.base_exclude_list(SimpleNamespace(model_type="glm_moe_dsa")) == []
+
+
+def test_glm5_rejects_user_exclusions():
+    """GLM-5 lists no modules for fp8_weight_sync_exclude_modules to match, so any pattern errors
+    instead of silently excluding nothing."""
+    with pytest.raises(ValueError, match="matches none of the 0 modules glm5"):
+        resolve_user_provided_exclude_list(GLM5_FP8_SPEC, SimpleNamespace(model_type="glm_moe_dsa"), ["*.layers.0.*"])
 
 
 def test_glm5_mxfp8_wire_requires_32_aligned_reduction_dim():

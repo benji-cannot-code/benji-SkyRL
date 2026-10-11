@@ -120,6 +120,9 @@ def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patte
         hf_config (Any): The checkpoint's HF config.
         patterns (Sequence[str]): HF module-name globs such as ``["*.layers.3.mlp.*"]``.
 
+    Raises:
+        ValueError: A pattern matches none of the modules the spec syncs as FP8.
+
     Returns:
         tuple[str, ...]: The matched module names in model order, without duplicates. On a
             Qwen3.5 MoE checkpoint, ``["*.layers.3.mlp.*"]`` gives
@@ -134,6 +137,12 @@ def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patte
     excluded: set[str] = set()
     for pattern in patterns:
         matched = [module for module in modules if fnmatch.fnmatchcase(module, pattern)]
+        if not matched:
+            example = f" (e.g. {modules[0]!r})" if modules else ""
+            raise ValueError(
+                f"fp8_weight_sync_exclude_modules pattern {pattern!r} matches none of the "
+                f"{len(modules)} modules {spec.name} syncs as FP8{example}."
+            )
         excluded.update(matched)
     return tuple(module for module in modules if module in excluded)
 

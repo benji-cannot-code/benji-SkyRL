@@ -1270,7 +1270,7 @@ class InferenceEngineConfig(BaseConfig):
 
     SkyRL uses this for both the vLLM engine initialization and weight sync, so the two steps are always
     in sync. Patterns are matched only against modules the model spec syncs as FP8; a pattern that
-    matches none of them is ignored. Modules vLLM fuses into one must be excluded together (for
+    matches none of them is an error. Modules vLLM fuses into one must be excluded together (for
     Qwen3.5: ``q_proj``/``k_proj``/``v_proj``, ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``),
     or vLLM fails at engine init.
     Requires ``fp8_weight_sync_mode``."""

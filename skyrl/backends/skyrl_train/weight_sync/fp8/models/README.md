@@ -31,7 +31,7 @@ call it on the same config, so they see the same modules:
 - **weight sync**: `SerializedFp8Config.user_provided_exclude_list` makes the
   sender pass those weights through unquantized.
 
-A pattern that matches no FP8 module is ignored.
+A pattern that matches no FP8 module is rejected before the engine starts.
 Excluding only part of a module vLLM fuses (e.g. `q_proj` without `k_proj` and
 `v_proj`) is left to vLLM, which rejects it when the engine starts.
 

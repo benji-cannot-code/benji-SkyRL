@@ -102,18 +102,18 @@ def test_exclusions_expand_globs_in_layer_order():
         "model.layers.0.*",  # the flat text spelling, on a VL checkpoint
     ],
 )
-def test_exclusions_ignore_a_pattern_that_matches_no_fp8_module(pattern):
-    assert resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern]) == ()
+def test_exclusions_reject_a_pattern_that_matches_no_fp8_module(pattern):
+    with pytest.raises(ValueError, match="matches none"):
+        resolve_user_provided_exclude_list(QWEN35_FP8_SPEC, _moe_vl_config(), [pattern])
 
 
-def test_exclusions_keep_matches_when_another_pattern_matches_no_fp8_module():
-    excluded = resolve_user_provided_exclude_list(
-        QWEN35_FP8_SPEC,
-        _moe_vl_config(),
-        ["*.does_not_exist.*", "*.layers.1.mlp.experts"],
-    )
-
-    assert excluded == (f"{LM}.1.mlp.experts",)
+def test_exclusions_reject_a_non_matching_pattern_next_to_matching_ones():
+    with pytest.raises(ValueError, match="'\\*.does_not_exist.\\*' matches none"):
+        resolve_user_provided_exclude_list(
+            QWEN35_FP8_SPEC,
+            _moe_vl_config(),
+            ["*.layers.1.mlp.experts", "*.does_not_exist.*"],
+        )
 
 
 def test_user_provided_exclude_list_extends_the_base_exclude_list():

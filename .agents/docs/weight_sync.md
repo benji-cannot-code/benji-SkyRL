@@ -137,7 +137,7 @@ more modules in the model dtype. `resolve_user_provided_exclude_list` expands it
 the spec's `fp8_modules`; the driver calls it for the engine (`engine_exclude_list`, the
 spec's `base_exclude_list` plus the user's modules) and each trainer rank calls it for the
 sender (`SerializedFp8Config.user_provided_exclude_list`), on the same config, so the two
-cannot disagree. Patterns that match nothing are ignored; vLLM itself
+cannot disagree. A pattern that matches nothing is rejected before engine init; vLLM itself
 rejects excluding part of a fused module. Excluded routed experts go out as the
 bridge's BF16 batched tensors through the model's own loader. The Megatron side has its
 own, independent knobs (`fp8_exclude_modules`, `num_layers_at_{start,end}_in_bf16`,

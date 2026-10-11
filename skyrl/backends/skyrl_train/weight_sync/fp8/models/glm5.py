@@ -90,8 +90,9 @@ def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: st
 
 
 def get_glm5_fp8_modules(hf_config: Any) -> list[str]:
-    """No modules for user exclusions (``fp8_weight_sync_exclude_modules``) to match: they are
-    not supported on GLM-5 yet, since its routed experts are exported one tensor per expert."""
+    """No modules for user exclusions (``fp8_weight_sync_exclude_modules``) to match, so any
+    pattern is rejected: they are not supported on GLM-5 yet, since its routed experts are
+    exported one tensor per expert."""
 
     return []
 
