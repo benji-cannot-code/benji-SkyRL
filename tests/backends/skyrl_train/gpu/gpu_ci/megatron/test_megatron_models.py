@@ -221,7 +221,9 @@ def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None) ->
             # GDN hybrid: one Mamba cache block per decode seq; the slim KV
             # pool fits ~163 blocks, and the vLLM default max_num_seqs=1024
             # fails CUDA-graph capture. The test runs <= 80 concurrent seqs.
-            overrides["max_num_seqs"] = 128
+            # The *_exclude row keeps two layers' routed experts BF16 (~1.6 GiB
+            # more weights per engine), which leaves only ~96 blocks.
+            overrides["max_num_seqs"] = 80 if fp8_mode.endswith("_exclude") else 128
     if "qwen3.5-0.8b" in model_name.lower() and not fp8_mode:
         # vLLM 0.30 captures extra graph/memory state during startup on the
         # 24 GB L4 CI shape. The test prompts are <=512 and generation is
@@ -599,6 +601,27 @@ async def construct_training_input_from_generator_output(generator_output, token
             id="qwen3.5-35b-a3b_h100_tp4_ep4_full_fp8",
             marks=pytest.mark.h100,
         ),
+        # Same shape with the *_exclude modules kept BF16 on both sides, which on this
+        # MoE model includes the routed experts of layers 0 and 3. Their batched BF16
+        # tensors bypass the FP8 MoE wire and load through vLLM's own load_weights, and
+        # blockwise vLLM leaves those layers unquantized from the expert-0 ignore names;
+        # the dense exclusion row reaches neither path.
+        pytest.param(
+            4,
+            1,
+            1,
+            4,
+            1,
+            1,
+            4,
+            "Qwen/Qwen3.5-35B-A3B",
+            3e-1,
+            5e-2,
+            "full_fp8_exclude",
+            None,
+            id="qwen3.5-35b-a3b_h100_tp4_ep4_full_fp8_exclude",
+            marks=pytest.mark.h100,
+        ),
         # MXFP8 rows (Blackwell-only): mxfp8 Megatron compute + vLLM rollout
         # fed by the serialized MXFP8 wire — the recipe/wire pair that
         # fp8_recipe="auto" + fp8_weight_sync_mode="auto" resolve to on B200.
@@ -735,7 +758,7 @@ async def test_logprobs_matching_roundtrip(
                     "fp8_param": fp8_mode == "fp8_param",
                 }
             )
-            if fp8_mode == "mxfp8_exclude":
+            if fp8_mode.endswith("_exclude"):
                 # The same modules stay BF16 on both sides: the first layer, layer 3
                 # (full attention, plus the routed and shared experts on MoE models)
                 # and every GDN out_proj, named in Megatron and in HF terms.
