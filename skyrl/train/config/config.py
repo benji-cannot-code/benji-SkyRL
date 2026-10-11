@@ -1515,6 +1515,20 @@ class MTPConfig(BaseConfig):
 
 
 @dataclass
+class GrafanaAnnotationsConfig(BaseConfig):
+    """Configure optional organization-scoped Grafana run annotations."""
+
+    enabled: bool = False
+    """Publish a run-name start marker and close it as a region when training ends."""
+    token_env_var: str = "GRAFANA_API_TOKEN"
+    """Environment variable containing the annotation API token; never stored in run config."""
+    organization_id: Optional[int] = None
+    """Organization override; otherwise use the head's RAY_GRAFANA_ORG_ID (default 1)."""
+    tags: List[str] = field(default_factory=list)
+    """Additional annotation tags, such as a cluster name."""
+
+
+@dataclass
 class TrainerConfig(BaseConfig):
     placement: PlacementConfig = field(default_factory=PlacementConfig)
     use_expandable_segments: bool = True
@@ -1572,6 +1586,15 @@ class TrainerConfig(BaseConfig):
     max_training_steps: Optional[int] = None
     """If set, stop training after this many steps regardless of epochs or dataset size.
     Useful for CI smoke tests and quick validation runs."""
+    step_timeout_s: Optional[float] = None
+    """If set, the driver raises ``StepTimeoutError`` when one training step (generation through weight sync)
+    takes longer than this many seconds. Checkpoint and HF saves made outside a step each get their own budget of
+    this size. Eval is not covered. Only the driver's wait is interrupted; a hung worker keeps running until
+    teardown. See the "Step timeouts" troubleshooting section."""
+    weight_sync_timeout_s: Optional[float] = None
+    """If set, the driver raises ``WeightSyncTimeoutError`` when one weight sync (including the initial sync before
+    training) takes longer than this many seconds. Must not exceed ``step_timeout_s``. Only the driver's wait is
+    interrupted; a hung worker keeps running until teardown."""
     update_epochs_per_batch: int = 1
     """Number of gradient update passes over each training batch.
     Equivalent to the concept of "PPO epochs", where the same experience is iterated over multiple times."""
@@ -1686,6 +1709,9 @@ class TrainerConfig(BaseConfig):
     """Fused LM-head backend: ``"torch"`` (default) or ``"triton"``.
     The Triton backend requires CUDA + triton and falls back to ``"torch"``
     when unavailable. Ignored unless ``fused_lm_head_logprob`` is true."""
+
+    grafana_annotations: GrafanaAnnotationsConfig = field(default_factory=GrafanaAnnotationsConfig)
+    """Optional Grafana run annotation publishing, disabled by default."""
 
     def __post_init__(self):
         # ref model defaults to the policy model
