@@ -672,6 +672,8 @@ class MegatronConfig(BaseConfig):
         ):
             if value is not None:
                 self.transformer_config_kwargs.setdefault(key, value)
+        if self.num_layers_at_start_in_bf16 < 0 or self.num_layers_at_end_in_bf16 < 0:
+            raise ValueError("num_layers_at_start_in_bf16 and num_layers_at_end_in_bf16 must be >= 0")
         if self.num_layers_at_start_in_bf16 > 0 or self.num_layers_at_end_in_bf16 > 0:
             self.transformer_config_kwargs.setdefault("first_last_layers_bf16", True)
             self.transformer_config_kwargs.setdefault("num_layers_at_start_in_bf16", self.num_layers_at_start_in_bf16)
