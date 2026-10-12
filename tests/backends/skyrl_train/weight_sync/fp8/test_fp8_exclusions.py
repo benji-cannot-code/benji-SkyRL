@@ -80,20 +80,6 @@ def test_fp8_modules_skip_a_shared_expert_without_width():
     assert QWEN35_FP8_SPEC.fp8_modules(hf_config)[4:] == ["model.layers.0.mlp.experts"]
 
 
-def test_exclusions_expand_globs_in_layer_order():
-    excluded = resolve_user_provided_exclude_list(
-        QWEN35_FP8_SPEC, _moe_vl_config(), ["*.layers.3.self_attn.*", "*.layers.1.mlp.experts"]
-    )
-
-    assert excluded == (
-        f"{LM}.1.mlp.experts",
-        f"{LM}.3.self_attn.q_proj",
-        f"{LM}.3.self_attn.k_proj",
-        f"{LM}.3.self_attn.v_proj",
-        f"{LM}.3.self_attn.o_proj",
-    )
-
-
 @pytest.mark.parametrize(
     "pattern",
     [

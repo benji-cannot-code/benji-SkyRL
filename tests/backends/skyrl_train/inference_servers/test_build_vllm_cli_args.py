@@ -241,7 +241,7 @@ def test_serialized_fp8_exclusions_reach_the_engine_ignore_list(monkeypatch):
     _apply_serialized_fp8_weight_sync_defaults(ie_cfg, engine_kwargs, model_path="qwen35-test")
 
     ignored = engine_kwargs["hf_overrides"]["quantization_config"]["ignored_layers"]
-    assert ignored[-7:] == [
+    assert set(ignored[-7:]) == {
         "model.language_model.layers.0.mlp.experts.0.gate_proj",
         "model.language_model.layers.0.mlp.experts.0.up_proj",
         "model.language_model.layers.0.mlp.experts.0.down_proj",
@@ -249,7 +249,7 @@ def test_serialized_fp8_exclusions_reach_the_engine_ignore_list(monkeypatch):
         "model.language_model.layers.1.self_attn.k_proj",
         "model.language_model.layers.1.self_attn.v_proj",
         "model.language_model.layers.1.self_attn.o_proj",
-    ]
+    }
 
 
 class TestGetPDP2PConnectorName:

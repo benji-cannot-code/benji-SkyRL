@@ -124,7 +124,7 @@ def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patte
         ValueError: A pattern matches none of the modules the spec syncs as FP8.
 
     Returns:
-        tuple[str, ...]: The matched module names in model order, without duplicates. On a
+        tuple[str, ...]: The matched module names, without duplicates. On a
             Qwen3.5 MoE checkpoint, ``["*.layers.3.mlp.*"]`` gives
             ``(
                 "model.language_model.layers.3.mlp.experts",
@@ -144,7 +144,7 @@ def resolve_user_provided_exclude_list(spec: ModelFp8Spec, hf_config: Any, patte
                 f"{len(modules)} modules {spec.name} syncs as FP8{example}."
             )
         excluded.update(matched)
-    return tuple(module for module in modules if module in excluded)
+    return tuple(excluded)
 
 
 def engine_exclude_list(
