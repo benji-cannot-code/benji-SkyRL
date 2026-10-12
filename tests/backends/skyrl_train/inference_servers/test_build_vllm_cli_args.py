@@ -235,7 +235,7 @@ def test_serialized_fp8_exclusions_reach_the_engine_ignore_list(monkeypatch):
     cfg = SkyRLTrainConfig()
     ie_cfg = cfg.generator.inference_engine
     ie_cfg.fp8_weight_sync_mode = "blockwise"
-    ie_cfg.fp8_weight_sync_exclude_modules = ["*.layers.1.self_attn.*", "*.layers.0.mlp.experts"]
+    ie_cfg.fp8_weight_sync_exclude_modules = ["*.layers.1.self_attn.*", "*.layers.0.mlp.experts.*"]
     engine_kwargs = {}
 
     _apply_serialized_fp8_weight_sync_defaults(ie_cfg, engine_kwargs, model_path="qwen35-test")

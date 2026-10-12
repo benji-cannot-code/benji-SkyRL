@@ -61,9 +61,10 @@ class SerializedFp8Config:
 
     ``spec`` is the per-model quantization policy, resolved once from the HF
     config via ``resolve_fp8_spec``; the tensor iterators require it.
-    ``user_provided_exclude_list`` holds the spec's FP8 modules the user keeps
-    in the model dtype (``resolve_user_provided_exclude_list``); the engine
-    builds the same modules unquantized.
+    ``user_provided_exclude_list`` holds the spec's FP8 tensors (named as in
+    its ``fp8_modules``) the user keeps in the model dtype
+    (``resolve_user_provided_exclude_list``); the engine builds their modules
+    unquantized.
     """
 
     # blockwise-wire parameters; the MXFP8 wire has no equivalents (its group
@@ -132,7 +133,9 @@ def resolve_serialized_fp8_config(
             "FP8 weight sync requires a registered model spec for the configured checkpoint "
             f"(registered specs: {', '.join(registered_fp8_spec_names())})."
         )
-    user_provided_exclude_list = resolve_user_provided_exclude_list(spec, hf_config, exclude_modules or ())
+    user_provided_exclude_list = resolve_user_provided_exclude_list(
+        spec, hf_config, fp8_weight_sync_mode, exclude_modules or ()
+    )
     return SerializedFp8Config(
         spec=spec,
         wire_format=fp8_weight_sync_mode,
@@ -222,23 +225,23 @@ def iter_batched_moe_expert_fp8_tensors(
     routed MoE layer from ``6 * num_experts`` tensors to six and lets vLLM use
     its fused 3D loader.
     """
-    moe_spec = config.require_spec().moe_expert_spec(name)
-    if moe_spec is None:
+    stacked = config.require_spec().stacked_experts(name)
+    if stacked is None:
         raise ValueError(f"Not a batched MoE expert tensor: {name}")
     if tensor.ndim != 3:
         raise ValueError(f"Batched MoE expert tensor must be 3D, got shape={tuple(tensor.shape)}")
-    if moe_spec.split_dim is not None:
-        num_projections = len(moe_spec.projections)
-        if tensor.shape[moe_spec.split_dim] % num_projections != 0:
+    if stacked.split_dim is not None:
+        num_projections = len(stacked.projections)
+        if tensor.shape[stacked.split_dim] % num_projections != 0:
             raise ValueError(
-                f"Batched MoE tensor dim {moe_spec.split_dim} must split evenly across "
+                f"Batched MoE tensor dim {stacked.split_dim} must split evenly across "
                 f"{num_projections} projections, got shape={tuple(tensor.shape)}"
             )
-        projection_tensors = torch.chunk(tensor, num_projections, dim=moe_spec.split_dim)
+        projection_tensors = torch.chunk(tensor, num_projections, dim=stacked.split_dim)
     else:
         projection_tensors = (tensor,)
 
-    for proj, projection_tensor in zip(moe_spec.projections, projection_tensors):
+    for projection, projection_tensor in zip(stacked.projections, projection_tensors):
         if config.is_mxfp8:
             q_weight, scale = batched_mx_cast_to_fp8(projection_tensor)
         else:
@@ -247,7 +250,7 @@ def iter_batched_moe_expert_fp8_tensors(
                 config.weight_block_size,
                 config.power_2_scale,
             )
-        weight_name = f"{SKYRL_BATCHED_MOE_FP8_PREFIX}{moe_spec.experts_base}.{proj.hf_name}.weight"
+        weight_name = f"{SKYRL_BATCHED_MOE_FP8_PREFIX}{stacked.experts_base}.{projection}.weight"
         yield weight_name, q_weight
         yield scale_name_for_weight(weight_name, config.wire_format), scale
 
@@ -260,22 +263,18 @@ def iter_serialized_fp8_tensors(
 ) -> Iterator[tuple[str, torch.Tensor]]:
     """Yield vLLM checkpoint tensors for one Megatron-exported weight.
 
-    Weights of an excluded module pass through in ``target_dtype``, the way
-    the unquantized engine module loads them; a batched expert tensor then
-    keeps its checkpoint name and goes through the model's own loader.
+    An excluded tensor passes through in ``target_dtype``, the way the
+    unquantized engine module loads it; a stacked expert tensor then keeps its
+    checkpoint name and goes through the model's own loader.
     """
 
     spec = config.require_spec()
-    moe_spec = spec.moe_expert_spec(name)
-    if moe_spec is not None and moe_spec.experts_base not in config.user_provided_exclude_list:
+    excluded = name.removesuffix(".weight") in config.user_provided_exclude_list
+    if not excluded and spec.stacked_experts(name) is not None:
         yield from iter_batched_moe_expert_fp8_tensors(name, tensor, config)
         return
 
-    if (
-        tensor.ndim == 2
-        and spec.should_quantize(name, tuple(tensor.shape), config.wire_format)
-        and name.removesuffix(".weight") not in config.user_provided_exclude_list
-    ):
+    if not excluded and tensor.ndim == 2 and spec.should_quantize(name, tuple(tensor.shape), config.wire_format):
         if config.is_mxfp8:
             q_weight, scale = mx_cast_to_fp8(tensor)
         else:

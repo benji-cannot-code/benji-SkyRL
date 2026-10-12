@@ -134,12 +134,15 @@ warning.
 
 `generator.inference_engine.fp8_weight_sync_exclude_modules` (HF module-name globs) keeps
 more modules in the model dtype. `resolve_user_provided_exclude_list` expands it against
-the spec's `fp8_modules`; the driver calls it for the engine (`engine_exclude_list`, the
-spec's `base_exclude_list` plus the user's modules) and each trainer rank calls it for the
-sender (`SerializedFp8Config.user_provided_exclude_list`), on the same config, so the two
-cannot disagree. A pattern that matches nothing is rejected before engine init; vLLM itself
-rejects excluding part of a fused module. Excluded routed experts go out as the
-bridge's BF16 batched tensors through the model's own loader. The Megatron side has its
+the spec's `fp8_modules` (one name per FP8 tensor, as exported minus `.weight`); the driver
+calls it for the engine (`engine_exclude_list`, the spec's `base_exclude_list` plus the
+user's modules) and each trainer rank calls it for the sender
+(`SerializedFp8Config.user_provided_exclude_list`), on the same config, so the two cannot
+disagree. A pattern that matches nothing is rejected before engine init, and so is excluding
+only some of a layer's routed experts, which vLLM runs at one precision without rejecting the
+split; vLLM itself rejects excluding part of a fused module. Excluded routed experts go out
+in BF16 under their checkpoint names (Qwen3.5's stacked tensors, GLM-5's per-expert ones)
+through the model's own loader. The Megatron side has its
 own, independent knobs (`fp8_exclude_modules`, `num_layers_at_{start,end}_in_bf16`,
 `te_precision_config_file` on `MegatronConfig`); nothing checks the two sides against each
 other. See `fp8/models/README.md`.

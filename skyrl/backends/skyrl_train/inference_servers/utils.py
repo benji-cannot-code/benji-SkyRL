@@ -62,7 +62,7 @@ def _serialized_fp8_engine_exclude_list(
             "FP8 weight sync has no registered model spec for this checkpoint layout "
             f"(registered specs: {', '.join(registered_fp8_spec_names())}); model_path={model_path!r}"
         )
-    user_provided_exclude_list = resolve_user_provided_exclude_list(spec, hf_config, exclude_modules or ())
+    user_provided_exclude_list = resolve_user_provided_exclude_list(spec, hf_config, wire_format, exclude_modules or ())
     return engine_exclude_list(spec, hf_config, wire_format, user_provided_exclude_list)
 
 

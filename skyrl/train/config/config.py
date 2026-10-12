@@ -1264,17 +1264,20 @@ class InferenceEngineConfig(BaseConfig):
     fp8_weight_sync_exclude_modules: Optional[List[str]] = None
     """HF module-name globs to keep in ``model_dtype`` on the FP8 rollout, on top of the model spec.
 
-    Patterns use ``fnmatch`` syntax and match module names as they appear in the HF checkpoint,
-    without the ``.weight`` suffix, e.g. ``model.language_model.layers.3.self_attn.q_proj``. A MoE
-    layer's routed experts are one module, ``<layer>.mlp.experts``. Examples:
+    Patterns use ``fnmatch`` syntax and match the names of the tensors synced as FP8, as the HF
+    checkpoint names them, without the ``.weight`` suffix, e.g.
+    ``model.language_model.layers.3.self_attn.q_proj``. Routed experts are their exported tensors:
+    Qwen3.5's stacked ``<layer>.mlp.experts.gate_up_proj`` / ``down_proj``, GLM-5's per-expert
+    ``<layer>.mlp.experts.<n>.gate_proj``, ... Examples:
     ``["*.layers.0.*", "*.layers.39.*"]`` (first and last layer of a 40-layer model),
-    ``["*.mlp.shared_expert.*"]``, ``["*.layers.3.mlp.experts"]``.
+    ``["*.mlp.shared_expert.*"]``, ``["*.layers.3.mlp.experts.*"]``.
 
     SkyRL uses this for both the vLLM engine initialization and weight sync, so the two steps are always
-    in sync. Patterns are matched only against modules the model spec syncs as FP8; a pattern that
-    matches none of them is an error. Modules vLLM fuses into one must be excluded together (for
-    Qwen3.5: ``q_proj``/``k_proj``/``v_proj``, ``gate_proj``/``up_proj``, ``in_proj_qkv``/``in_proj_z``),
-    or vLLM fails at engine init.
+    in sync. Patterns are matched only against tensors the model spec syncs as FP8; a pattern that
+    matches none of them is an error. A layer's routed experts run at one precision in vLLM, so
+    excluding only some of them is an error too. Modules vLLM fuses into one must be excluded
+    together (for Qwen3.5: ``q_proj``/``k_proj``/``v_proj``, ``gate_proj``/``up_proj``,
+    ``in_proj_qkv``/``in_proj_z``), or vLLM fails at engine init.
     Requires ``fp8_weight_sync_mode``."""
     run_engines_locally: bool = True
     """Launch inference servers during the training run in the current Ray cluster.

@@ -2,8 +2,7 @@
 
 from skyrl.backends.skyrl_train.weight_sync.fp8.models import (
     ModelFp8Spec,
-    MoeExpertSpec,
-    MoeProjection,
+    StackedExperts,
     batched_moe_wire_targets,
     engine_exclude_list,
     register_fp8_spec,
@@ -42,9 +41,8 @@ __all__ = [
     "WIRE_FORMATS",
     "SKYRL_BATCHED_MOE_FP8_PREFIX",
     "ModelFp8Spec",
-    "MoeExpertSpec",
-    "MoeProjection",
     "SerializedFp8Config",
+    "StackedExperts",
     "batched_blockwise_cast_to_fp8",
     "batched_moe_wire_targets",
     "batched_mx_cast_to_fp8",

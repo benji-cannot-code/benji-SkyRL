@@ -11,8 +11,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
     BLOCKWISE_FP8,
     MXFP8,
     ModelFp8Spec,
-    MoeExpertSpec,
-    MoeProjection,
+    StackedExperts,
     register_fp8_spec,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import MXFP8_GROUP_SIZE
@@ -39,11 +38,10 @@ _QWEN35_FP8_WEIGHT_SUFFIXES = tuple(
         *_QWEN35_FP8_SHARED_EXPERT_MODULES,
     )
 )
-# Megatron Bridge exports routed experts in batched tensors. Keep the expert
-# dimension intact on the wire so the receiver can use vLLM's fused MoE loader.
-_QWEN35_MOE_EXPERTS_MODULE = "mlp.experts"
-_QWEN35_MOE_GATE_UP_SUFFIX = f".{_QWEN35_MOE_EXPERTS_MODULE}.gate_up_proj"
-_QWEN35_MOE_DOWN_SUFFIX = f".{_QWEN35_MOE_EXPERTS_MODULE}.down_proj"
+# Megatron Bridge exports a layer's routed experts as two stacked tensors. Keep the
+# expert dimension intact on the wire so the receiver can use vLLM's fused MoE loader.
+_QWEN35_MOE_GATE_UP = "mlp.experts.gate_up_proj"
+_QWEN35_MOE_DOWN = "mlp.experts.down_proj"
 _QWEN35_UNQUANTIZED_LINEAR_SUFFIXES = (
     ".in_proj_b",
     ".in_proj_a",
@@ -70,10 +68,6 @@ _QWEN35_MXFP8_VISION_MERGER_TEMPLATES = (
     "{model_prefix}.visual.merger.linear_fc1",
     "{model_prefix}.visual.merger.linear_fc2",
 )
-
-_MOE_GATE = MoeProjection(hf_name="gate_proj", vllm_param="w13_weight", shard_id="w1")
-_MOE_UP = MoeProjection(hf_name="up_proj", vllm_param="w13_weight", shard_id="w3")
-_MOE_DOWN = MoeProjection(hf_name="down_proj", vllm_param="w2_weight", shard_id="w2")
 
 
 def is_qwen35_config(hf_config: Any) -> bool:
@@ -142,13 +136,16 @@ def get_qwen35_base_exclude_list(
     return ignored
 
 
-def get_qwen35_fp8_modules(hf_config: Any) -> list[str]:
-    """Return the HF module names Qwen3.5 syncs as FP8, layer by layer.
+def get_qwen35_fp8_modules(hf_config: Any, wire_format: str = BLOCKWISE_FP8) -> list[str]:
+    """Return the tensors Qwen3.5 syncs as FP8, layer by layer, minus ``.weight``.
 
     Names follow Megatron-Bridge's export: unified VL checkpoints nest the
     language model under ``model.language_model``, text-only checkpoints keep
-    it under ``model``. A MoE layer's routed experts are one ``mlp.experts``
-    entry, matching the batched tensors the bridge exports for them.
+    it under ``model``. A MoE layer's routed experts are its two stacked
+    tensors, ``mlp.experts.gate_up_proj`` and ``mlp.experts.down_proj``.
+
+    The list is the same on both wires: MXFP8 sends BF16 only the weights whose
+    reduction dim is not a multiple of 32, and no Qwen3.5 text linear has one.
     """
 
     if not is_qwen35_config(hf_config):
@@ -156,7 +153,7 @@ def get_qwen35_fp8_modules(hf_config: Any) -> list[str]:
     text_config = resolve_text_config(hf_config)
     prefix = "model" if text_config is hf_config else "model.language_model"
     if "moe" in str(getattr(text_config, "model_type", "")):
-        mlp_modules = (_QWEN35_MOE_EXPERTS_MODULE,)
+        mlp_modules = (_QWEN35_MOE_GATE_UP, _QWEN35_MOE_DOWN)
         # vLLM builds the shared expert only when it has a width.
         if getattr(text_config, "shared_expert_intermediate_size", 0) > 0:
             mlp_modules += _QWEN35_FP8_SHARED_EXPERT_MODULES
@@ -189,17 +186,17 @@ def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: st
     return True
 
 
-def batched_moe_expert_spec(name: str) -> Optional[MoeExpertSpec]:
-    """Map a Megatron Bridge batched Qwen3.5 MoE tensor name onto projections."""
+def get_qwen35_stacked_experts(name: str) -> Optional[StackedExperts]:
+    """Describe a Megatron Bridge stacked Qwen3.5 expert tensor; None for any other tensor."""
 
-    if name.endswith(_QWEN35_MOE_GATE_UP_SUFFIX):
-        return MoeExpertSpec(
-            experts_base=name[: -len(".gate_up_proj")],
-            projections=(_MOE_GATE, _MOE_UP),
+    if name.endswith(f".{_QWEN35_MOE_GATE_UP}"):
+        return StackedExperts(
+            experts_base=name.removesuffix(".gate_up_proj"),
+            projections=("gate_proj", "up_proj"),
             split_dim=1,
         )
-    if name.endswith(_QWEN35_MOE_DOWN_SUFFIX):
-        return MoeExpertSpec(experts_base=name[: -len(".down_proj")], projections=(_MOE_DOWN,))
+    if name.endswith(f".{_QWEN35_MOE_DOWN}"):
+        return StackedExperts(experts_base=name.removesuffix(".down_proj"), projections=("down_proj",))
     return None
 
 
@@ -210,7 +207,6 @@ QWEN35_FP8_SPEC = register_fp8_spec(
         should_quantize=is_quantizable_weight_shape,
         base_exclude_list=get_qwen35_base_exclude_list,
         fp8_modules=get_qwen35_fp8_modules,
-        moe_expert_spec=batched_moe_expert_spec,
-        moe_projections=(_MOE_GATE, _MOE_UP, _MOE_DOWN),
+        stacked_experts=get_qwen35_stacked_experts,
     )
 )

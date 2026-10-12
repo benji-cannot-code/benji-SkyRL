@@ -194,18 +194,18 @@ def test_qwen35_base_exclude_list_is_not_inferred_from_unrelated_hybrid_config()
     assert QWEN35_FP8_SPEC.base_exclude_list(hf_config) == []
 
 
-def test_moe_batched_expert_spec_recognizes_and_splits_gate_up():
+def test_stacked_experts_recognizes_and_splits_gate_up():
     base = "model.language_model.layers.5.mlp.experts"
-    gate_up = QWEN35_FP8_SPEC.moe_expert_spec(f"{base}.gate_up_proj")
+    gate_up = QWEN35_FP8_SPEC.stacked_experts(f"{base}.gate_up_proj")
     assert gate_up.experts_base == base
-    assert [p.hf_name for p in gate_up.projections] == ["gate_proj", "up_proj"]
+    assert gate_up.projections == ("gate_proj", "up_proj")
     assert gate_up.split_dim == 1
-    down = QWEN35_FP8_SPEC.moe_expert_spec(f"{base}.down_proj")
+    down = QWEN35_FP8_SPEC.stacked_experts(f"{base}.down_proj")
     assert down.experts_base == base
-    assert [p.hf_name for p in down.projections] == ["down_proj"]
+    assert down.projections == ("down_proj",)
     assert down.split_dim is None
-    assert QWEN35_FP8_SPEC.moe_expert_spec("model.layers.5.mlp.gate.weight") is None
-    assert QWEN35_FP8_SPEC.moe_expert_spec("model.layers.5.self_attn.q_proj.weight") is None
+    assert QWEN35_FP8_SPEC.stacked_experts("model.layers.5.mlp.gate.weight") is None
+    assert QWEN35_FP8_SPEC.stacked_experts("model.layers.5.self_attn.q_proj.weight") is None
 
 
 def test_moe_shared_expert_serialization_follows_the_main_fp8_policy():
@@ -317,7 +317,7 @@ def test_resolve_fp8_spec_matches_qwen35_and_rejects_unknown_layouts():
     assert resolve_fp8_spec(SimpleNamespace(model_type="llama")) is None
 
 
-def test_batched_moe_wire_targets_derive_from_registered_specs():
+def test_batched_moe_wire_targets_follow_vllms_fused_moe_slots():
     assert batched_moe_wire_targets() == {
         ".experts.gate_proj.weight": (".experts.w13_weight", "w1"),
         ".experts.up_proj.weight": (".experts.w13_weight", "w3"),
