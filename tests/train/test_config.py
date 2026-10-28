@@ -495,7 +495,6 @@ def test_megatron_empty_cuda_cache_from_cli_override():
     )
     assert cfg.trainer.policy.megatron_config.empty_cuda_cache is None
     assert cfg.trainer.policy.megatron_config.empty_cuda_cache_after_backward() is False
->>>>>>> main
 
 
 def test_megatron_validation_allows_inference_only_fp8_param_without_gather():
