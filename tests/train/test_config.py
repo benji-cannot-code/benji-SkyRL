@@ -465,6 +465,7 @@ def test_cli_overrides_accept_fp8_exclusion_lists():
     assert megatron_config.transformer_config_kwargs["first_last_layers_bf16"] is True
     assert list(cfg.generator.inference_engine.fp8_weight_sync_exclude_modules) == ["*.layers.0.*", "*.layers.39.*"]
 
+
 @pytest.mark.parametrize(
     "empty_cuda_cache, optimizer_kwargs, expected",
     [
