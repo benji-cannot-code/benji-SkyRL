@@ -17,6 +17,7 @@ bash examples/train/algorithms/dapo/prepare_dapo_data.sh
 | --- | --- | --- | --- |
 | `run_fp8_hopper_blockwise_qwen35_9b.sh` | 8×H100 | blockwise, FP32 scales | — |
 | `run_fp8_hopper_blockwise_fp8param_qwen35_9b.sh` | 8×H100 | blockwise, FP32 scales | E4M3 primary weights (~39% less parameter HBM) |
+| `run_fp8_hopper_blockwise_mixed_qwen35_9b.sh` | 8×H100 | blockwise, FP32 scales; some modules kept in BF16 ([below](#choosing-which-modules-run-in-fp8)) | — |
 | `run_fp8_hopper_blockwise_qwen35_35b_a3b.sh` | 2×8×H100 | blockwise, FP32 scales | — |
 | `run_fp8_hopper_blockwise_fp8param_qwen35_35b_a3b.sh` | 2×8×H100 | blockwise, FP32 scales | E4M3 primary weights (~42% less parameter HBM) |
 | `run_fp8_blackwell_mxfp8_qwen35_9b.sh` | 8×B200 | `auto` → native MXFP8 | not yet supported on MXFP8 |
@@ -67,7 +68,10 @@ the other: to keep a module in BF16 everywhere, list it on both sides.
 | `generator.inference_engine.fp8_weight_sync_mode` | Wire format: `blockwise`, `mxfp8`, or `auto` (follows the policy's recipe) |
 | `generator.inference_engine.fp8_weight_sync_exclude_modules` | HF module-name globs kept in BF16 on the rollout, e.g. `['*.layers.0.*','*.layers.39.*']`; SkyRL derives both the engine's ignore list and the sync from this one list |
 
-For example, to keep the last two layers of Qwen3.5-35B-A3B (40 layers) in BF16 on both sides:
+`run_fp8_hopper_blockwise_mixed_qwen35_9b.sh` is a complete example. It keeps layers 0, 1 and 31 of
+Qwen3.5-9B, and the q/k/v/o projections of every full-attention layer, in BF16 on both sides.
+
+As a smaller example, to keep the last two layers of Qwen3.5-35B-A3B (40 layers) in BF16 on both sides:
 
 ```bash
   trainer.policy.megatron_config.num_layers_at_end_in_bf16=2 \
